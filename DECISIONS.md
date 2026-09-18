@@ -26,11 +26,19 @@ See `docs/adr/0001-duckdb-as-the-graph-store.md`.
 
 ## 3. Resolution: hand-written rules in SQL, three bands, non-destructive
 
-**Chose.** **Source Records** stay immutable. Names are normalised (legal forms stripped, accents stripped, tokens sorted), candidate pairs come from blocking, and scoring uses DuckDB core functions only (`jaro_winkler_similarity` with a score cutoff). A **Firm Match** needs a strong name score *and* one independent corroborating signal (ZIP, phone, officer, or an explicit prior-revoked-number pointer). Weaker pairs become **Possible Matches**, shown to the analyst and never used to form **Entities**. Entities are connected components over Firm Matches, with a cluster-size guard.
+**Chose.** **Source Records** stay immutable. Names are normalised (legal forms stripped, accents stripped, tokens sorted), candidate pairs come from blocking, and scoring uses DuckDB core functions only. A **Firm Match** needs a strong name score *and* one independent corroborating signal (ZIP, phone, officer, or an explicit prior-revoked-number pointer). Weaker pairs become **Possible Matches**, shown to the analyst and never used to form **Entities**. Entities are connected components over Firm Matches, with a cluster-size guard.
+
+Refined after reading real pairs (measured precision is in the README):
+
+- **Name score.** Each word is scored against its closest word in the other name with `jaro_winkler_similarity`, and a word scoring below 0.9 counts as different. Jaro-Winkler over the whole sorted string let shared leading words carry unrelated names, scoring `CONSTRUCTION INDUSTRIAL PRECISE` against `... STEEL` at 0.95.
+- **Crowded values are not evidence.** A phone or officer shared by more than 10 distinct names is treated like an **Agent Address**.
+- **Brands are not identities.** A trade name carried by more than two different legal names (a franchise, or a group's brand) is not used to match.
+- **Name alone is not enough inside FMCSA.** Two Registrations sharing only a name are not matched at all: 0 of 15 labelled pairs were one Carrier. Against GLEIF, the same pair stays a Possible Match.
+- **One Registration, at most one LEI.** A Registration as strongly matched to several GLEIF records is matched to none of them firmly.
 
 **Against.** *Splink* (Fellegi-Sunter on DuckDB): more principled, but its unsupervised EM training is known to behave badly when true matches are a tiny fraction of candidate pairs, which is the FMCSA-to-GLEIF case, and learned weights are harder to defend than a rule I wrote. *Embeddings*: `ABC Trucking` and `ABD Trucking` are near neighbours; that is the wrong notion of similar. *The `rapidfuzz` community extension*: works, but community extensions download at runtime and that is a fragile step in a clean clone. *Destructive merging*: reasoning about a tidied copy hides exactly the mess the analyst needs to see.
 
-**Cost.** Thresholds are hand-picked, not calibrated. Without `token_set_ratio`, subset names (`PEPSI` / `PEPSI BOTTLING GROUP`) land in Possible rather than Firm. Every query pays a cluster indirection. **Where the rule is wrong:** two franchisees of one brand in the same ZIP become one Entity, producing a false **Hidden Concentration**; the analyst can reject it with a Verdict, but only if they look.
+**Cost.** Thresholds are hand-picked, not calibrated. Subset names (`PEPSI` / `PEPSI BOTTLING GROUP`) land in Possible rather than Firm. Sorting tokens makes `J & H EXPRESS` equal `H & J EXPRESS`. Every query pays a cluster indirection. **Where the rule is wrong:** two franchisees of one brand, each under its own legal name that includes the brand, in the same ZIP become one Entity, producing a false **Hidden Concentration**; the analyst can reject it with a Verdict, but only if they look. In Pass B, most corroborated Possible Matches are a parent and its subsidiary at one address, not one Entity.
 
 **Mitigation.** ~100 hand-labelled pairs sampled across the bands, measured precision reported in the README.
 
