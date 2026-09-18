@@ -1,0 +1,30 @@
+[project]
+name = "common-cause"
+version = "0.1.0"
+description = "Finds suppliers and carriers that look independent but share a common cause, from public registries."
+requires-python = ">=3.13"
+dependencies = [
+    "duckdb>=1.5.5",
+    "httpx>=0.28.1",
+    "pyarrow>=25.0.1",
+]
+
+[build-system]
+requires = ["uv_build>=0.11.31,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pyright>=1.1.414",
+    "pytest>=9.1.1",
+    "ruff>=0.16.8",
+]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pyright]
+include = ["src", "tests"]

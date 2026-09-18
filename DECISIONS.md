@@ -38,7 +38,7 @@ See `docs/adr/0001-duckdb-as-the-graph-store.md`.
 
 ## 4. The slice
 
-**Chose.** GLEIF: entities with a US legal or headquarters address (~361k), all corporate consolidation edges worldwide with their endpoint entities (ownership chains leave the country), and reporting exceptions for those entities. Fund relationships skipped. FMCSA: `power_units >= 10`, any status, plus out-of-service orders for those numbers. Shipped as a committed Parquet snapshot; `make ingest` rebuilds it.
+**Chose.** GLEIF: entities with a US legal or headquarters address (383,816 in the 2026-09-18 snapshot), all corporate consolidation edges worldwide with their endpoint entities (ownership chains leave the country), and reporting exceptions for those entities. Fund relationships skipped. FMCSA: `power_units >= 10`, any status, plus out-of-service orders for those numbers. Shipped as a committed Parquet snapshot; `make ingest` rebuilds it.
 
 **Against.** *Everything*: 5.7 GB and 4.5M rows, and an ingestion pipeline is not the product. *One industry or one state*: ownership chains and fleets cross both. *Active carriers only*: deletes the out-of-service-then-reregistered pattern.
 
