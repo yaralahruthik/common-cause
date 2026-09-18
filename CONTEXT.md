@@ -107,3 +107,9 @@ _Avoid_: Last updated, timestamp, freshness
 **Staleness**:
 The condition of a Source Record whose registry marks it lapsed, inactive, or long un-refreshed. Shown as a risk signal, never cleaned away.
 _Avoid_: Bad data, outdated
+
+### How resolution is checked
+
+**Labelled Pair**:
+A Match drawn into a fixed sample and judged same Entity, different, or unsure, so that precision can be measured per band. Its label belongs to no Portfolio and changes no Match; that is what separates it from a Verdict.
+_Avoid_: Verdict, ground truth, gold pair
