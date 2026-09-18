@@ -77,6 +77,7 @@ CENSUS_HEADER = [
     "phy_zip",
     "phone",
     "company_officer_1",
+    "company_officer_2",
     "prior_revoke_dot_number",
 ]
 
