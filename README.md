@@ -130,7 +130,7 @@ No Entity exceeds 25 records. Two hold more than one LEI and are flagged.
 | `PUT /portfolios/{id}/members/{member_id}/verdicts/{entity_id}` | Takes `{"verdict": "confirmed" \| "rejected"}` on one of that member's Matches. |
 | `GET /portfolios/{id}/exposure` | Hidden Concentrations ranked by share of the Portfolio, Ownership Status per member, walked/declared disagreements, and the As-Of Date of each source. |
 
-**Matching a Portfolio name.** The name is normalised the same way Source Records are. If exactly one Entity goes by that normalised name (within the state and city, when given), it is a Firm Match. Otherwise the member gets up to 3 Possible Matches: the Entities whose names score at least 0.8, exact hits held by several Entities included. Many names hit twice, once as the FMCSA Registration and once as the GLEIF record that resolution did not firmly join. The state or city then picks one, and the analyst's Verdict settles the rest.
+**Matching a Portfolio name.** The name is normalised the same way Source Records are. If exactly one Entity goes by that normalised name (within the state and city, when given), it is a Firm Match. The member also gets up to 3 Possible Matches: the other Entities whose names score at least 0.8, exact hits held by several Entities included. They stay beside a Firm Match, so an analyst who rejects it still has the near names to confirm. Many names hit twice, once as the FMCSA Registration and once as the GLEIF record that resolution did not firmly join. The state or city then picks one, and the analyst's Verdict settles the rest.
 
 **Ultimate Parent.** Direct Ownership Links are walked upward by a recursive CTE, which stops on a cycle or after 20 hops. Where the chain breaks, the Declared Ultimate Parent stands in. Where nothing is declared, the furthest company reached stands in; inside a cycle that is the smallest LEI on it, so every company in the cycle gets the same one. A complete walk that ends somewhere other than the Declared Ultimate Parent is kept, and the disagreement is reported. On the 2026-09-18 snapshot:
 
@@ -149,7 +149,7 @@ No Entity exceeds 25 records. Two hold more than one LEI and are flagged.
 - a GLEIF headquarters or FMCSA physical address that is not an Agent Address
 - a GLEIF legal jurisdiction
 
-A Carrier with no GLEIF record can only share an address, because FMCSA publishes no ownership. A Concentration is **tentative** unless at least two of its members reach it through a Firm or confirmed Match. A rejected Match drops out. When a member has a Firm or confirmed Match, its other candidates drop out too.
+A Carrier with no GLEIF record can only share an address, because FMCSA publishes no ownership. A Concentration is **tentative** unless at least two of its members reach it through a Firm or confirmed Match. A rejected Match drops out. When a member has a Firm or confirmed Match, its other Matches drop out too.
 
 **Ownership Status** is read from the member's firmly matched Entity. A member with no Firm or confirmed Match, or whose Entity holds no GLEIF record, counts as Undisclosed Parent. The exposure reports how many members are unverifiable out of the whole Portfolio.
 

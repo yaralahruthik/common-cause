@@ -40,7 +40,7 @@ create table if not exists workspace.verdict (
 );
 """
 
-# Every word of every name a record goes by: a Portfolio name's candidates are the records sharing a word with it.
+# Every word of every name a record goes by: a Portfolio name is only scored against records sharing a word with it.
 NAME_TOKEN_SQL = """
 create or replace table name_token as
 select record_id, name_key, published_name, unnest(string_split(name_key, ' ')) as token
@@ -75,8 +75,9 @@ where legal_jurisdiction <> ''
 """
 
 # A Portfolio name is matched to Entities by the names their records go by. One Entity with the exact normalised
-# name (within the state and city, when given) is a Firm Match. Otherwise the closest Entities scoring at least
-# POSSIBLE_NAME_SCORE are Possible Matches, exact hits shared by several Entities included.
+# name (within the state and city, when given) is a Firm Match. The closest other Entities scoring at least
+# POSSIBLE_NAME_SCORE are Possible Matches, exact hits shared by several Entities included. They are kept beside a
+# Firm Match so that an analyst who rejects it still has the near names to confirm.
 PORTFOLIO_MATCH_SQL = """
 create or replace temp table portfolio_match as
 with query as (
@@ -124,7 +125,7 @@ counted as (
 select
     counted.member_id,
     counted.entity_id,
-    case when exact_entities = 1 then 'Firm' else 'Possible' end as band,
+    case when exact_entities = 1 and exact then 'Firm' else 'Possible' end as band,
     round(score, 3) as score,
     record_id,
     published_name as name,
@@ -132,7 +133,7 @@ select
     state,
     concat_ws('; ',
         case
-            when exact_entities = 1 then format('only Entity with the name "{}"', published_name)
+            when exact_entities = 1 and exact then format('only Entity with the name "{}"', published_name)
             when exact then format('name "{}" matches exactly, as do {} other Entities', published_name,
                 exact_entities - 1)
             else format('name "{}" similarity {:.2f}', published_name, score)
@@ -145,12 +146,12 @@ left join workspace.verdict as verdict
     on verdict.portfolio_id = $portfolio
     and verdict.member_id = counted.member_id
     and verdict.entity_id = counted.entity_id
-where exact_entities <> 1 or exact
-qualify row_number() over (partition by counted.member_id order by score desc, counted.entity_id) <= $max_possible
+qualify row_number() over (partition by counted.member_id, band order by score desc, counted.entity_id)
+    <= $max_possible
 """
 
 # What the analyst's Verdicts leave standing: a Firm or confirmed Match holds and hides the member's other
-# candidates; unjudged Possible Matches are carried as not firm; a rejected Match is gone.
+# Matches; unjudged Possible Matches are carried as not firm; a rejected Match is gone.
 MEMBER_ENTITY_SQL = """
 create or replace temp table member_entity as
 select member_id, entity_id, band = 'Firm' or verdict is not distinct from 'confirmed' as firm

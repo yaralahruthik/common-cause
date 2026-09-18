@@ -107,6 +107,22 @@ def test_a_near_name_is_a_possible_match_and_at_most_three_are_offered(sources, 
     ]
 
 
+def test_a_firm_match_keeps_the_near_names_so_rejecting_it_leaves_something_to_confirm(sources, tmp_path):
+    gleif(sources, "LEI0", "Acme Freight Lines")
+    gleif(sources, "LEI1", "Acme Freight Line")
+    graph = opened(sources, tmp_path)
+    portfolio_id = graph.create_portfolio([Member("Acme Freight Lines")])
+
+    assert matched(graph, portfolio_id) == [[("gleif:LEI0", "Firm"), ("gleif:LEI1", "Possible")]]
+    graph.record_verdict(portfolio_id, 1, "gleif:LEI0", "rejected")
+    graph.record_verdict(portfolio_id, 1, "gleif:LEI1", "confirmed")
+
+    assert [(m.entity_id, m.verdict) for m in graph.portfolio(portfolio_id)[0].matches] == [
+        ("gleif:LEI0", "rejected"),
+        ("gleif:LEI1", "confirmed"),
+    ]
+
+
 def test_a_name_that_normalises_to_nothing_or_matches_nothing_has_no_match(sources, tmp_path):
     gleif(sources, "LEI1", "Acme Foods, Inc.")
     graph = opened(sources, tmp_path)
