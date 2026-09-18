@@ -10,4 +10,4 @@
 
 ## Watch items, not yet incidents
 
-- The research agent's GLEIF relationship-type shares (fund ~50%, consolidation ~50%) were extrapolated from the first ~60k rows of a file it also described as sorted. A head sample of a sorted file is not a random sample. To be checked against full-file counts during ingest; `ASSUMPTIONS.md` gap 2 carries the caveat until then.
+- The research agent's GLEIF relationship-type shares (fund ~50%, consolidation ~50%) were extrapolated from the first ~60k rows of a file it also described as sorted. A head sample of a sorted file is not a random sample. **Checked during ingest (2026-09-18):** the full file has 53.2% consolidation and 46.4% fund records, so the estimate was close. It was close by luck, not by method. `ASSUMPTIONS.md` gap 2 now carries the full-file counts.

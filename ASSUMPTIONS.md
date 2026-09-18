@@ -14,13 +14,15 @@ Each entry: what was unclear, what I decided, why, and what I would need to know
 
 ## 2. "Broadly one parent record per registered entity" is not true
 
-**Unclear.** The problem statement says to expect GLEIF relationship edges to track the entity count. Verified on the 2026-09-17 Golden Copy: 3,433,392 entities, 488,216 relationship records, 6,361,112 reporting exceptions. Roughly half the relationship records are fund structures (share estimated from a ~60k-row head sample, not the full file). About 244k are corporate consolidation edges. Most entities file an *exception* in place of a parent.
+**Unclear.** The problem statement says to expect GLEIF relationship edges to track the entity count. Counted in full on the 2026-09-18 Golden Copy: 3,434,096 entities, 488,309 relationship records, 6,362,498 reporting exceptions. Of the relationship records, 259,753 (53.2%) are corporate consolidation edges (126,784 direct, 132,969 ultimate), 226,597 (46.4%) are fund structures (fund-managed-by, sub-fund, feeder) and 1,959 (0.4%) are international branches. Most entities file an *exception* in place of a parent.
 
-**Decided.** Absence of an Ownership Link is never read as independence. Every **Entity** carries an **Ownership Status**: **Declared Parent**, **Declared Independent** (exception reasons `NATURAL_PERSONS`, `NON_CONSOLIDATING`) or **Undisclosed Parent** (`NO_LEI`, `NON_PUBLIC`, `NO_KNOWN_PERSON`, or no LEI at all). The interface always reports how much of a Portfolio is unverifiable.
+**Decided.** Absence of an Ownership Link is never read as independence. Every **Entity** carries an **Ownership Status**: **Declared Parent** (an active consolidation edge), **Declared Independent** (every exception reason given is `NATURAL_PERSONS` or `NON_CONSOLIDATING`) or **Undisclosed Parent** (any other reason, such as `NO_LEI`, `NO_KNOWN_PERSON`, `NON_PUBLIC` and its newer variants like `CONSENT_NOT_OBTAINED`, or no filing at all). About 7,000 direct-parent exceptions in the full file give several reasons (195 in the slice), most often `NATURAL_PERSONS` alongside `NO_KNOWN_PERSON`; one hedged reason is enough to make independence unverifiable. The direct-parent exception is read before the ultimate-parent one. The interface always reports how much of a Portfolio is unverifiable.
+
+In the snapshot's 383,816 entities with a US legal or headquarters address, 20,453 (5.3%) have a Declared Parent, 197,584 (51.5%) are Declared Independent and 165,779 (43.2%) have an Undisclosed Parent.
 
 **Why.** "No concentration found" over a graph where most nodes have no parent edge is a false reassurance, which is the worst thing a risk tool can emit.
 
-**Would change my mind.** If the full-file relationship-type counts differ materially from the head sample, the proportions above change; the three-state model does not.
+**Would change my mind.** An ownership source that covers private companies, such as beneficial-ownership filings, would shrink the Undisclosed Parent share; the three-state model stays.
 
 ## 3. "Near real time" from sources that publish daily
 
