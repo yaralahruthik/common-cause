@@ -10,6 +10,8 @@ Each entry: what I chose, what I chose against and why not, what it cost, what w
 
 **Cost.** No map, so the motivating example (a flood closes an industrial park) is not served. No single per-supplier number for the CPO.
 
+**As built.** The reframing held up, but mostly for companies that appear in both registries. The curated sample of 15 food and beverage makers finds 4 Hidden Concentrations and 1 tentative one. A random list of 15 private-fleet operators finds none, with ownership unverifiable for 14 of them. Only 2.1% of Registrations join firmly to a GLEIF record.
+
 **Would change my mind.** Historical snapshots of the FMCSA census (then degradation-over-time becomes real and scoring becomes defensible).
 
 ## 2. Storage: DuckDB with recursive CTEs
@@ -21,6 +23,8 @@ See `docs/adr/0001-duckdb-as-the-graph-store.md`.
 **Against.** *Neo4j*: one traversable edge type and shallow chains, so Cypher buys little and costs a server in the clean-clone path. *Postgres*: nothing is transactional except **Verdicts**.
 
 **Cost.** Single writer. No graph query language, so every new traversal is hand-written SQL. DuckPGQ (SQL/PGQ) could not be relied on: the community extension failed to download for the current DuckDB version when tested.
+
+**As built.** The graph is not kept in a DuckDB file. The snapshot is loaded into memory and resolved at every start-up, which takes about 8 seconds and means a rule change needs no migration. Only Portfolios and Verdicts are written to disk. The one traversal needed, the ownership walk, is one recursive CTE of about 70 lines, cycle and broken-chain handling included.
 
 **Would change my mind.** Real **Supply Links** arriving (variable-length paths over several edge types favours a graph database), or multi-user writes and daily delta upserts (favours Postgres).
 
@@ -41,7 +45,7 @@ Refined after reading real pairs (measured precision is in the README):
 
 **Cost.** Thresholds are hand-picked, not calibrated. Subset names (`PEPSI` / `PEPSI BOTTLING GROUP`) land in Possible rather than Firm. Sorting tokens makes `J & H EXPRESS` equal `H & J EXPRESS`. Every query pays a cluster indirection. **Where the rule is wrong:** two franchisees of one brand, each under its own legal name that includes the brand, in the same ZIP become one Entity, producing a false **Hidden Concentration**; the analyst can reject it with a Verdict, but only if they look. In Pass B, most corroborated Possible Matches are a parent and its subsidiary at one address, not one Entity.
 
-**Mitigation.** ~100 hand-labelled pairs sampled across the bands, measured precision reported in the README.
+**Mitigation.** 102 Matches sampled across the bands, labelled, and the precision per band reported in the README. The labels were made by an AI assistant, not by a person (`AI_LOG.md` entry 2), so the figures measure agreement with one careful reader. Firm Matches were right in 33 of the 33 decided pairs. In Pass B the Possible band was right 5 times in 15 when corroborated and 9 times in 16 on name alone, which is why it is shown to the analyst and never used to build Entities.
 
 **Would change my mind.** A few thousand labelled pairs (then Splink with supervised weights wins), or analyst Verdicts accumulating at volume (same thing, for free).
 
@@ -51,9 +55,11 @@ Refined after reading real pairs (measured precision is in the README):
 
 **Against.** *Everything*: 5.7 GB and 4.5M rows, and an ingestion pipeline is not the product. *One industry or one state*: ownership chains and fleets cross both. *Active carriers only*: deletes the out-of-service-then-reregistered pattern.
 
-**Cost.** The 10-unit floor drops ~95% of FMCSA. That reincarnation pattern is concentrated among small carriers, so the slice under-samples the very phenomenon it shows off. The snapshot ages and makes the repository heavy.
+**Cost.** The 10-unit floor drops about 96% of FMCSA: the slice keeps 192,915 of the census's 4,502,467 rows (counted 2026-09-18). That reincarnation pattern is concentrated among small carriers, so the slice under-samples the very phenomenon it shows off. The snapshot ages and makes the repository heavy.
 
 **At fifty times the volume, in the order I expect it to break:** (1) blocking, because pair counts grow quadratically inside a block; watch the block-size histogram at ingest, fix with multi-key and rare-token blocking and a block-size cap. (2) transitive clusters, because more records mean more bad bridges; watch the cluster-size distribution. (3) the fixed **Agent Address** threshold, which should become relative to local density. (4) the committed snapshot, which moves to object storage with delta ingest. Storage and traversal are last: ownership edges grow about 2x, not 50x. I believe that; I have not tested it.
+
+**As built.** The first warning is already visible at this size. Two blocking keys exceed the 1,000-record cap and are skipped (names starting `CAPITAL ` in New York and in California), so records in them are never matched. Candidate pairs total about 3.4 million. No Entity exceeds 25 records, and the whole resolution runs in about 7 seconds. `make resolve` prints both histograms, so the early warnings are one command away.
 
 ## 5. Shared address as a Common Cause, and the Agent Address rule
 
@@ -62,6 +68,8 @@ Refined after reading real pairs (measured precision is in the README):
 **Against.** Using legal and mailing addresses: thousands of unrelated companies share one registered-agent address in Delaware, and a naive rule flags half of any Portfolio as one concentration.
 
 **Cost.** A real industrial park with fifteen tenants is discounted too, and that is the motivating example. Geocoding plus parcel data would separate the two cases; out of scope.
+
+**As built.** The threshold is more than 10 distinct names. The snapshot has 4,400 such addresses. The largest, `251 LITTLE FALLS DR 19808` in Wilmington, carries 4,505 names. The detail screen shows how many names are registered at a shared address and who they are, so an analyst can judge a site that falls just under the line.
 
 **Jurisdiction is ranked last.** A shared legal jurisdiction is listed after every Ultimate Parent and address Concentration, however large its share. In a 25-name food-and-beverage test Portfolio, 52% of it was incorporated in Delaware. Ranked by share alone, that would be the headline finding, and it tells an analyst almost nothing. It stays in the list because a change in one state's law does reach every company incorporated there.
 
@@ -81,6 +89,8 @@ Refined after reading real pairs (measured precision is in the README):
 
 **Cost.** The analyst cannot browse. The tool answers one question.
 
+**As built.** A first-time user needs names to paste, so the landing page offers a sample. It is curated, which means it finds what it was chosen to find, and the interface says so. Beside it the page shows what a random list of the same size finds (nothing), so the sample's result cannot be read as typical.
+
 ## 8. No LLM at runtime
 
 **Chose.** Deterministic resolution. LLM adjudication of the Possible band only, offline, with cached verdicts committed so a clean clone needs no key, as the first stretch item and the first thing cut.
@@ -89,10 +99,28 @@ Refined after reading real pairs (measured precision is in the README):
 
 **Would change my mind.** Measured precision in the Possible band so poor that the analyst's review queue is unusable.
 
+**As built.** Cut: it was first in the cut order. The measurement now argues for it: in Pass B the Possible band is right 33% of the time when corroborated and 56% on name alone. Those pairs are where an analyst's time goes, and the most common error, a parent and its subsidiary at one address, is one a model reading both records could name. It is the first thing to build next.
+
 ## 9. Stack: FastAPI and React
 
 **Chose.** FastAPI and React with TypeScript. Python keeps the resolution work next to the database and its data tooling; a typed frontend keeps three screens of match evidence honest. No strong counter-argument for this shape of application. The alternative considered was a single Next.js application (one deploy), rejected because the resolution work wants Python's data tooling next to the database.
 
+**Cost.** A clean clone needs two toolchains, uv and Node.js, and the interface must be built before `make serve` shows it. Every API shape is written twice, as a Pydantic model and as a TypeScript type, and nothing checks that the two agree.
+
+**Would change my mind.** A team whose other services are all TypeScript, or an interface small enough to render on the server with no build step.
+
+## 10. A Concentration counts only what is firm
+
+**Chose.** A Concentration's share counts only members whose Match is Firm or confirmed. It is **tentative** unless two different Entities reach it that way, and the share it would have if every Possible Match held is shown beside it. Two Portfolio names that resolve to one Entity are one company, not a Concentration. A Verdict is stored against the Source Record its Match was made through (an LEI or a USDOT number), not against the Entity id.
+
+**Against.** Counting every Possible Match: in the sample, 9 members would be affected rather than 7. The extra two are Rolling Frito-Lay and Naked Juice under PepsiCo, and that group rests on "Naked Juice LLC", a name two different Entities hold exactly. Until the analyst says which, it is a guess. Keying Verdicts to Entity ids: simpler, but Entity ids are recomputed every time the snapshot is resolved, so a Verdict would quietly stop applying after a rebuild.
+
+**Cost.** The headline figure is lower than the evidence may support. An analyst who does not work through the undecided names sees less exposure than there is.
+
+**Would change my mind.** Possible-band precision high enough (from LLM adjudication or accumulated Verdicts) that counting a Possible Match is more often right than wrong.
+
 ## Cut order, decided in advance
 
 LLM adjudication → Verdict persistence (keep the buttons, hold state in session) → jurisdiction Common Cause → out-of-service join (keep census status only) → "confirm all" conveniences. Never cut: three-state **Ownership Status**, Match evidence in the interface, the measured precision number, the five documents.
+
+**What was cut.** The two ends of the list: LLM adjudication and the "confirm all" conveniences, so each Match is decided one at a time. Verdict persistence, the jurisdiction Common Cause and the out-of-service join were all built. Not planned but also not built: delta ingest and Supply Links from USAspending, both drawn in `docs/architecture/`.

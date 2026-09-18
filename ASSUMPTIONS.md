@@ -10,7 +10,7 @@ Each entry: what was unclear, what I decided, why, and what I would need to know
 
 **Why.** Walking three GLEIF parent hops and labelling the result "Tier 3 suppliers" produces a confident, plausible and wrong answer. The reframing is still the thing the glossary calls the concentration risk that matters most: "several suppliers who all depend on the same upstream source."
 
-**Would change my mind.** A loadable source of real supply edges. The best free candidate found is USAspending prime-to-subaward records (structured, real contractual edges, US federal only). Customs bill-of-lading data is the true answer and is not freely available in bulk.
+**Would change my mind.** A loadable source of real supply edges. The best free candidate found is USAspending prime-to-subaward records (structured, real contractual edges, US federal only). Customs bill-of-lading data is the true answer and is not freely available in bulk. USAspending is drawn in `docs/architecture/` as designed, not built: a `supply_link` table between Entities, the only edge a Tier would be counted along.
 
 ## 2. "Broadly one parent record per registered entity" is not true
 
@@ -50,9 +50,13 @@ In the snapshot's 383,816 entities with a US legal or headquarters address, 20,4
 
 **Would change my mind.** A measured match rate so low that the cross-source join is decorative. Then the honest system is two graphs and a shared interface.
 
+**Measured.** 4,065 of 192,915 Registrations (2.1%) have a Firm Match to a GLEIF record, and another 5,964 (3.1%) have only a Possible one. For companies large enough to hold an LEI the join does real work: in the curated sample it is what carries Hiland Dairy's Registration to its GLEIF record and up the ownership chain to Prairie Farms. For a random list of 15 private-fleet operators it is close to decorative: 14 names matched a Registration, and ownership was unverifiable for all 14. What still works for them is the shared-address cause, which needs no GLEIF record. The recommendation stands because splitting into two graphs would drop the one finding the join makes possible, an FMCSA Registration reaching a GLEIF ownership chain, and would save nothing: where the join fails, each member already falls back to what FMCSA alone can say. What changes is how it is presented. The README states the rate plainly, and the interface reports the unverifiable share on every result.
+
 ## 6. There is no customer, so there is no "my suppliers"
 
 **Decided.** The user pastes or uploads a Portfolio of names. A bundled sample shaped like a food-and-beverage manufacturer's list is provided, built from what the data contains and disclosed as curated, alongside what a random Portfolio shows.
+
+**As built.** The sample is 15 food and beverage makers chosen because their records are in the snapshot. It finds 4 Hidden Concentrations and 1 tentative, affecting 7 of 15. Next to it, the interface shows 15 companies drawn at random (fixed seed) from active FMCSA Registrations that run a private fleet. That list finds none.
 
 **Would change my mind.** Access to a real supplier master file, which would also supply addresses and make **Firm Matches** reachable far more often.
 

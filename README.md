@@ -1,22 +1,67 @@
 # Common Cause
 
-Finds Suppliers and Carriers in a procurement Portfolio that look independent but share a Common Cause: one Ultimate Parent, one physical address, or one jurisdiction. Built from public registries: GLEIF (who owns whom) and the FMCSA carrier census (who runs trucks). Vocabulary is defined in [`CONTEXT.md`](CONTEXT.md).
+A procurement team diversifies by buying from several companies. Common Cause checks whether those companies really are several. Given a **Portfolio** of Supplier and Carrier names, it finds members that look independent but share a **Common Cause**: one Ultimate Parent, one physical address or one jurisdiction. Such a group is a **Hidden Concentration**. It is built from two public registries: GLEIF (who owns whom) and the FMCSA carrier census (who runs trucks). Vocabulary is defined in [`CONTEXT.md`](CONTEXT.md).
 
-## Running it
+In the bundled sample of 15 food and beverage makers, three dairies that go by three names and run 2,966 trucks between them trace back to Prairie Farms Dairy, one by ownership and one by address. Hiland Dairy's GLEIF ownership chain ends at Prairie Farms Dairy. East Side Jersey Dairy files nothing with GLEIF, but its FMCSA Registration sits at Prairie Farms' own address. The sample is curated (see [The interface](#the-interface)).
 
-Requires [uv](https://docs.astral.sh/uv/). A clean clone starts from the committed snapshot in `data/snapshot/`; nothing is downloaded.
+- [`docs/architecture/`](docs/architecture/README.md): how data flows from source to storage, what the storage model is, and what happens when an analyst asks a question.
+- [`docs/walkthrough.html`](docs/walkthrough.html): the whole project on one page. Download it and open it in a browser.
+- [`DECISIONS.md`](DECISIONS.md), [`ASSUMPTIONS.md`](ASSUMPTIONS.md), [`AI_LOG.md`](AI_LOG.md): the decisions and what they cost, the gaps in the problem statement, and where the coding agent was wrong.
+
+## Running it from a clean clone
+
+Needs `make`, [uv](https://docs.astral.sh/uv/) (it fetches Python 3.13 itself if missing) and Node.js 22.12 or later. Nothing is downloaded from the registries: a clean clone starts from the committed snapshot in `data/snapshot/`.
 
 ```sh
-make test       # run the test suite
+git clone https://github.com/yaralahruthik/common-cause.git
+cd common-cause
+make web        # install and build the interface
+make serve      # load and resolve the snapshot, then serve everything on http://127.0.0.1:8000
+```
+
+Open http://127.0.0.1:8000 and choose the sample, or paste your own names. `make serve` takes about 10 seconds to start, 8 of them spent resolving the whole snapshot, which it does on every start-up.
+
+Other targets:
+
+```sh
+make test       # run the Python test suite
+make web-test   # typecheck and test the interface
+make resolve    # resolve the snapshot and print the numbers in "Entity resolution" below
 make ingest     # re-fetch the slice from the live registries and rebuild data/snapshot/
 make rebuild    # rebuild data/snapshot/ from the download cache in data/raw/ without fetching
-make resolve    # resolve the snapshot into Entities and print the numbers in "Entity resolution" below
-make serve      # resolve the snapshot and serve the API on http://127.0.0.1:8000 (interactive docs at /docs)
-make web        # build the interface (needs Node.js); `make serve` then serves it at http://127.0.0.1:8000
-make web-test   # typecheck and test the interface
+make web-dev    # serve the interface with live reload on http://127.0.0.1:5173, beside `make serve`
 ```
 
 `make ingest` downloads about 700 MB into `data/raw/` (not committed). Set `SODA_APP_TOKEN` to avoid throttling on the FMCSA API.
+
+**Checked:** on 2026-09-18, a fresh clone from GitHub on macOS (Apple silicon, uv 0.11, Node 24) passed all 154 Python and 33 interface tests, built the interface and served the sample. It has not been run on Linux or Windows.
+
+## What works
+
+- **Ingest.** `make ingest` fetches the latest GLEIF Golden Copy and both FMCSA datasets and rebuilds the snapshot (about 15 seconds from the download cache). Every row keeps its As-Of Date.
+- **Entity resolution.** All 733,918 Source Records resolve into Entities in about 7 seconds, in SQL inside DuckDB. Every Match carries its evidence, and Possible Matches never merge records.
+- **Ownership.** Every GLEIF record gets an Ultimate Parent by walking its chain, with cycles, broken chains and disagreements with the Declared Ultimate Parent handled and counted. Every Entity has a three-state Ownership Status. A missing parent is never read as independence.
+- **Hidden Concentrations.** A pasted or uploaded Portfolio is matched, the analyst confirms or rejects the uncertain names, and the result is ranked. Concentrations that rest on an unconfirmed Match are marked tentative, and the unverifiable share is always stated.
+- **The interface.** Three screens take an analyst from a list of names to one Concentration's ownership path, Registrations and out-of-service orders. Verdicts survive a restart and a rebuild.
+
+## What does not work
+
+- **There are no Supply Links, so there are no Tiers.** Nothing in these sources says who supplies whom. The tool answers "which of my suppliers share an owner or a site", not "who supplies my suppliers" ([`ASSUMPTIONS.md`](ASSUMPTIONS.md) gap 1).
+- **The join between the registries is thin.** 2.1% of Registrations have a Firm Match to a GLEIF record. Most companies that run trucks have no LEI. In a random Portfolio of 15 private-fleet operators, 14 names matched a Registration and ownership was unverifiable for all 14.
+- **The Possible band is weak in Pass B.** Corroborated Possible Matches between FMCSA and GLEIF were right 5 times in 15 (33%), mostly because they find a parent and its subsidiary at one address.
+- **The precision figures were not independently checked.** The 102 labels were made by an AI assistant, and 17 pairs per band is a small sample (see [Measured precision](#measured-precision)).
+- **Concentrations that share a member are not joined.** The three dairies above show up as two Concentrations, a shared parent and a shared address. The analyst has to put the two together.
+- **A real industrial park is discounted.** An address shared by more than 10 distinct names is treated as an Agent Address, so fifteen tenants of one park do not form a Concentration.
+- **The slice under-samples small carriers.** It keeps Registrations with 10 or more power units: 192,915 of the census's 4,502,467 rows (4.3%). Two blocking keys over 1,000 records (names starting `CAPITAL ` in New York and in California) are skipped, so records in them are never matched.
+- **Freshness is manual.** Delta ingest is designed, not built. The snapshot is only as current as the last `make ingest`.
+- **Single user, no access control.** Anyone who can reach the server can read or change any Portfolio by its id. One connection does all the writes.
+- **Scale is argued, not tested.** [`DECISIONS.md`](DECISIONS.md) entry 4 names what breaks first at fifty times the volume. Nothing was run at that size.
+- **Cut:** LLM adjudication of the Possible band ([`DECISIONS.md`](DECISIONS.md) entry 8).
+
+## Time spent
+
+About 7 hours, from the first plan to this README.
+
 
 ## The data snapshot
 
