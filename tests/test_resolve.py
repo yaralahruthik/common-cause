@@ -3,11 +3,10 @@ from pathlib import Path
 import duckdb
 import pytest
 
-from common_cause.ingest.build import build_snapshot
-from common_cause.ingest.snapshot import load_snapshot
 from common_cause.resolve import resolve
 
 from .raw_sources import RawSourceBuilder
+from .snapshots import loaded
 
 
 @pytest.fixture
@@ -16,12 +15,7 @@ def sources() -> RawSourceBuilder:
 
 
 def resolved(sources: RawSourceBuilder, tmp_path: Path) -> duckdb.DuckDBPyConnection:
-    raw_dir = tmp_path / "raw"
-    raw_dir.mkdir()
-    snapshot_dir = tmp_path / "snapshot"
-    build_snapshot(sources.write(raw_dir), snapshot_dir)
-    con = duckdb.connect()
-    load_snapshot(con, snapshot_dir)
+    con = loaded(sources, tmp_path)
     resolve(con)
     return con
 
