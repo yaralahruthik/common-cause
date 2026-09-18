@@ -1,0 +1,272 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1500 1075" width="1500" height="1075" font-family="system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <title>Common Cause architecture: source to storage, storage model, query path</title>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#333"/>
+    </marker>
+    <marker id="ad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#999"/>
+    </marker>
+    <style>
+      .h { font-size: 20px; font-weight: 700; fill: #1a1a1a; }
+      .lane { font-size: 13px; font-weight: 700; fill: #444; letter-spacing: 0.06em; }
+      .lane-s { font-size: 13px; font-weight: 400; fill: #666; letter-spacing: 0; }
+      .t { font-size: 14px; font-weight: 600; fill: #1a1a1a; }
+      .s { font-size: 12px; fill: #3a3a3a; }
+      .g { font-size: 12px; fill: #777; font-style: italic; }
+      .m { font-size: 12px; fill: #1a1a1a; font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; }
+      .l { font-size: 11px; fill: #555; }
+      .box { stroke: #333; stroke-width: 1.2; }
+      .src { fill: #f4efe4; }
+      .ing { fill: #fff; }
+      .snap { fill: #e9eef5; }
+      .db { fill: #e9eef5; }
+      .qry { fill: #edf5ea; }
+      .todo { fill: #fbfbfb; stroke: #999; stroke-width: 1.2; stroke-dasharray: 6 4; }
+      .todo-t { fill: #777; }
+      .arr { stroke: #333; stroke-width: 1.4; fill: none; marker-end: url(#a); }
+      .arr2 { stroke: #333; stroke-width: 1.4; fill: none; marker-end: url(#a); marker-start: url(#a); }
+      .arrd { stroke: #999; stroke-width: 1.4; fill: none; stroke-dasharray: 6 4; marker-end: url(#ad); }
+      .sep { stroke: #ccc; stroke-width: 1; }
+      .cont { fill: none; stroke: #7a8ea8; stroke-width: 1.2; stroke-dasharray: 2 3; }
+    </style>
+  </defs>
+
+  <rect width="1500" height="1075" fill="#ffffff"/>
+  <text x="30" y="36" class="h">Common Cause: architecture</text>
+
+  <!-- Legend -->
+  <rect x="1300" y="88" width="180" height="110" rx="6" fill="#fff" stroke="#ccc"/>
+  <rect x="1316" y="104" width="34" height="20" rx="3" class="box ing"/>
+  <text x="1360" y="119" class="s">built</text>
+  <rect x="1316" y="134" width="34" height="20" rx="3" class="todo"/>
+  <text x="1360" y="149" class="s">designed, not built</text>
+  <path d="M1316,176 H1350" class="arr"/>
+  <text x="1360" y="180" class="s">data flow</text>
+
+  <!-- ============ Lane 1 ============ -->
+  <text x="30" y="70" class="lane">1 · SOURCE TO STORAGE <tspan class="lane-s">  batch, run by make ingest</tspan></text>
+
+  <rect x="30" y="88" width="270" height="64" rx="6" class="box src"/>
+  <text x="44" y="110" class="t">GLEIF Golden Copy</text>
+  <text x="44" y="128" class="s">L1 records, L2 relationships,</text>
+  <text x="44" y="144" class="s">reporting exceptions · 3× a day</text>
+
+  <rect x="30" y="162" width="270" height="48" rx="6" class="box src"/>
+  <text x="44" y="183" class="t">FMCSA carrier census</text>
+  <text x="44" y="201" class="s">Socrata dataset az4n-8mr2</text>
+
+  <rect x="30" y="220" width="270" height="48" rx="6" class="box src"/>
+  <text x="44" y="241" class="t">FMCSA out-of-service orders</text>
+  <text x="44" y="259" class="s">Socrata dataset p2mt-9ige</text>
+
+  <rect x="30" y="290" width="270" height="62" rx="6" class="todo"/>
+  <text x="44" y="311" class="t todo-t">USAspending subawards</text>
+  <text x="44" y="328" class="s todo-t">prime → sub contracts: Supply Links</text>
+  <text x="44" y="344" class="g">designed, not built</text>
+
+  <rect x="350" y="100" width="230" height="140" rx="6" class="box ing"/>
+  <text x="364" y="122" class="t">fetch.py</text>
+  <text x="364" y="144" class="s">Streams only the needed</text>
+  <text x="364" y="160" class="s">columns out of each zip;</text>
+  <text x="364" y="176" class="s">pages the Socrata APIs.</text>
+  <text x="364" y="202" class="s">Cache: data/raw/, ~700 MB,</text>
+  <text x="364" y="218" class="s">not committed.</text>
+
+  <rect x="630" y="100" width="280" height="140" rx="6" class="box ing"/>
+  <text x="644" y="122" class="t">build.py: the slice</text>
+  <text x="644" y="144" class="s">US LEIs, plus both ends of every</text>
+  <text x="644" y="160" class="s">consolidation edge worldwide.</text>
+  <text x="644" y="176" class="s">Consolidation edges only, no funds.</text>
+  <text x="644" y="192" class="s">Census: 10+ power units, any status.</text>
+  <text x="644" y="208" class="s">Exceptions → Ownership Status.</text>
+  <text x="644" y="224" class="s">Values kept as published text.</text>
+
+  <rect x="960" y="88" width="300" height="212" rx="6" class="box snap"/>
+  <text x="974" y="110" class="t">data/snapshot/*.parquet</text>
+  <text x="974" y="128" class="s">committed; a clean clone starts here</text>
+  <text x="974" y="152" class="m">gleif_record</text><text x="1246" y="152" class="m" text-anchor="end">541,003</text>
+  <text x="974" y="168" class="m">gleif_ownership_link</text><text x="1246" y="168" class="m" text-anchor="end">259,753</text>
+  <text x="974" y="184" class="m">gleif_reporting_exception</text><text x="1246" y="184" class="m" text-anchor="end">751,572</text>
+  <text x="974" y="200" class="m">gleif_ownership_status</text><text x="1246" y="200" class="m" text-anchor="end">541,003</text>
+  <text x="974" y="216" class="m">fmcsa_census</text><text x="1246" y="216" class="m" text-anchor="end">192,915</text>
+  <text x="974" y="232" class="m">fmcsa_oos_order</text><text x="1246" y="232" class="m" text-anchor="end">14,058</text>
+  <text x="974" y="260" class="s">Every row carries its As-Of Date.</text>
+  <text x="974" y="278" class="s">About 93 MB in total.</text>
+
+  <rect x="350" y="290" width="560" height="62" rx="6" class="todo"/>
+  <text x="364" y="311" class="t todo-t">Delta ingest</text>
+  <text x="364" y="328" class="s todo-t">GLEIF 8-hour delta files and Socrata :updated_at, upserted into the snapshot</text>
+  <text x="364" y="344" class="g">designed, not built</text>
+
+  <path d="M300,122 H348" class="arr"/>
+  <path d="M300,186 H348" class="arr"/>
+  <path d="M300,236 H348" class="arr"/>
+  <path d="M300,321 H325 V264 H465 V243" class="arrd"/>
+  <path d="M580,170 H628" class="arr"/>
+  <path d="M910,170 H958" class="arr"/>
+  <path d="M910,320 H935 V282 H958" class="arrd"/>
+
+  <line x1="20" y1="372" x2="1480" y2="372" class="sep"/>
+
+  <!-- ============ Lane 2 ============ -->
+  <text x="30" y="394" class="lane">2 · STORAGE MODEL <tspan class="lane-s">  what the graph is</tspan></text>
+  <path d="M1110,300 V398" class="arr"/>
+  <text x="1118" y="340" class="l">loaded at start-up (under 1 s),</text>
+  <text x="1118" y="354" class="l">then resolved (about 7 s)</text>
+
+  <rect x="20" y="402" width="1460" height="322" rx="8" class="cont"/>
+  <text x="1466" y="422" class="l" text-anchor="end">DuckDB, in memory · rebuilt from the snapshot at every start-up</text>
+
+  <rect x="30" y="432" width="260" height="125" rx="6" class="box db"/>
+  <text x="44" y="454" class="t">Source Records</text>
+  <text x="44" y="472" class="m">source_record</text>
+  <text x="44" y="492" class="s">One row per LEI record or FMCSA</text>
+  <text x="44" y="508" class="s">Registration, as published.</text>
+  <text x="44" y="524" class="s">Normalised name, street, ZIP, phone</text>
+  <text x="44" y="540" class="s">and officers sit beside it.</text>
+
+  <rect x="340" y="432" width="280" height="125" rx="6" class="box db"/>
+  <text x="354" y="454" class="t">Matches</text>
+  <text x="354" y="472" class="m">match</text>
+  <text x="354" y="492" class="s">A pair of Source Records, Firm or</text>
+  <text x="354" y="508" class="s">Possible, with its signals and one</text>
+  <text x="354" y="524" class="s">line of evidence for the analyst.</text>
+  <text x="354" y="540" class="s">A: FMCSA ↔ FMCSA  ·  B: FMCSA ↔ GLEIF</text>
+
+  <rect x="670" y="432" width="260" height="125" rx="6" class="box db"/>
+  <text x="684" y="454" class="t">Entities</text>
+  <text x="684" y="472" class="m">entity_member · entity</text>
+  <text x="684" y="492" class="s">Connected components over Firm</text>
+  <text x="684" y="508" class="s">Matches only; a Possible Match</text>
+  <text x="684" y="524" class="s">never joins two records.</text>
+  <text x="684" y="540" class="s">Flags: oversized, several_leis</text>
+
+  <rect x="980" y="432" width="280" height="125" rx="6" class="box db"/>
+  <text x="994" y="454" class="t">Common Causes</text>
+  <text x="994" y="472" class="m">entity_cause</text>
+  <text x="994" y="492" class="s">Per Entity: the Ultimate Parent of</text>
+  <text x="994" y="508" class="s">each LEI, a headquarters or physical</text>
+  <text x="994" y="524" class="s">address that is not an Agent Address,</text>
+  <text x="994" y="540" class="s">and the legal jurisdiction.</text>
+
+  <rect x="1300" y="432" width="170" height="125" rx="6" class="box db"/>
+  <text x="1314" y="454" class="t">Name index</text>
+  <text x="1314" y="472" class="m">name_token</text>
+  <text x="1314" y="492" class="s">Entity names,</text>
+  <text x="1314" y="508" class="s">normalised, for</text>
+  <text x="1314" y="524" class="s">matching what an</text>
+  <text x="1314" y="540" class="s">analyst types.</text>
+
+  <rect x="30" y="587" width="260" height="125" rx="6" class="box db"/>
+  <text x="44" y="609" class="t">Ownership Links</text>
+  <text x="44" y="627" class="m">gleif_ownership_link</text>
+  <text x="44" y="647" class="s">LEI → LEI consolidation edges,</text>
+  <text x="44" y="663" class="s">direct and declared-ultimate.</text>
+  <text x="44" y="679" class="s">Ownership Status beside each LEI:</text>
+  <text x="44" y="695" class="m">gleif_ownership_status</text>
+
+  <rect x="340" y="587" width="280" height="125" rx="6" class="box db"/>
+  <text x="354" y="609" class="t">Ultimate Parents</text>
+  <text x="354" y="627" class="m">ultimate_parent</text>
+  <text x="354" y="647" class="s">Recursive CTE walks direct links;</text>
+  <text x="354" y="663" class="s">stops on a cycle or at 20 hops.</text>
+  <text x="354" y="679" class="s">Declared parent where a chain breaks;</text>
+  <text x="354" y="695" class="s">disagreements kept and reported.</text>
+
+  <rect x="670" y="587" width="260" height="125" rx="6" class="box db"/>
+  <text x="684" y="609" class="t">Agent Addresses</text>
+  <text x="684" y="627" class="m">agent_address</text>
+  <text x="684" y="647" class="s">Addresses shared by more than 10</text>
+  <text x="684" y="663" class="s">distinct names. Never a Match</text>
+  <text x="684" y="679" class="s">signal, never a Common Cause.</text>
+
+  <rect x="980" y="587" width="280" height="125" rx="6" class="todo"/>
+  <text x="994" y="609" class="t todo-t">Supply Links</text>
+  <text x="994" y="627" class="m todo-t">supply_link</text>
+  <text x="994" y="647" class="s todo-t">Entity → Entity, from USAspending</text>
+  <text x="994" y="663" class="s todo-t">subawards. The only edge a Tier</text>
+  <text x="994" y="679" class="s todo-t">may be counted along.</text>
+  <text x="994" y="699" class="g">designed, not built</text>
+
+  <path d="M290,494 H338" class="arr"/>
+  <path d="M620,494 H668" class="arr"/>
+  <path d="M930,494 H978" class="arr"/>
+  <path d="M290,649 H338" class="arr"/>
+  <path d="M620,620 H645 V572 H1120 V559" class="arr"/>
+
+  <line x1="20" y1="740" x2="1480" y2="740" class="sep"/>
+
+  <!-- ============ Lane 3 ============ -->
+  <text x="30" y="762" class="lane">3 · QUERY PATH <tspan class="lane-s">  what fails together in this Portfolio?</tspan></text>
+
+  <rect x="30" y="805" width="180" height="120" rx="6" class="box qry"/>
+  <text x="44" y="827" class="t">Analyst's browser</text>
+  <text x="44" y="847" class="s">React + TypeScript,</text>
+  <text x="44" y="863" class="s">three screens:</text>
+  <text x="44" y="879" class="s">Portfolio → Exposure</text>
+  <text x="44" y="895" class="s">→ Concentration detail</text>
+
+  <rect x="250" y="805" width="180" height="120" rx="6" class="box qry"/>
+  <text x="264" y="827" class="t">FastAPI</text>
+  <text x="264" y="847" class="s">One DuckDB connection;</text>
+  <text x="264" y="863" class="s">a lock makes it the</text>
+  <text x="264" y="879" class="s">only writer.</text>
+
+  <rect x="470" y="795" width="230" height="145" rx="6" class="box qry"/>
+  <text x="484" y="817" class="t">1 · Match the names</text>
+  <text x="484" y="835" class="m">POST /portfolios</text>
+  <text x="484" y="855" class="s">An exact normalised name held</text>
+  <text x="484" y="871" class="s">by one Entity is Firm. Names</text>
+  <text x="484" y="887" class="s">scoring 0.8 or more become up</text>
+  <text x="484" y="903" class="s">to 3 Possible Matches, each</text>
+  <text x="484" y="919" class="s">with its evidence.</text>
+
+  <rect x="720" y="795" width="230" height="145" rx="6" class="box qry"/>
+  <text x="734" y="817" class="t">2 · Analyst decides</text>
+  <text x="734" y="835" class="m">PUT …/verdicts/{entity}</text>
+  <text x="734" y="855" class="s">Confirm or reject one Match.</text>
+  <text x="734" y="871" class="s">The Verdict holds for this</text>
+  <text x="734" y="887" class="s">Portfolio only.</text>
+
+  <rect x="970" y="795" width="230" height="145" rx="6" class="box qry"/>
+  <text x="984" y="817" class="t">3 · Exposure</text>
+  <text x="984" y="835" class="m">GET …/exposure</text>
+  <text x="984" y="855" class="s">Join members to their causes;</text>
+  <text x="984" y="871" class="s">group by what they share.</text>
+  <text x="984" y="887" class="s">Tentative unless two Entities</text>
+  <text x="984" y="903" class="s">reach it firmly. Ranked by</text>
+  <text x="984" y="919" class="s">share, jurisdiction last.</text>
+
+  <rect x="1220" y="795" width="250" height="145" rx="6" class="box qry"/>
+  <text x="1234" y="817" class="t">4 · Concentration detail</text>
+  <text x="1234" y="835" class="m">GET …/concentrations/{id}</text>
+  <text x="1234" y="855" class="s">Ownership path to the shared</text>
+  <text x="1234" y="871" class="s">parent, each Registration's</text>
+  <text x="1234" y="887" class="s">status and out-of-service</text>
+  <text x="1234" y="903" class="s">orders, As-Of Dates.</text>
+
+  <rect x="470" y="990" width="1000" height="62" rx="6" class="box snap"/>
+  <text x="484" y="1012" class="t">Workspace <tspan class="m">  data/workspace.duckdb</tspan><tspan class="s">  · attached to the same connection · not committed</tspan></text>
+  <text x="484" y="1036" class="s">portfolio, portfolio_member, verdict. A Verdict is keyed to the LEI or USDOT number its Match was made through, so it still applies after a re-resolve.</text>
+
+  <path d="M210,850 H248" class="arr2"/>
+  <path d="M430,865 H468" class="arr"/>
+  <path d="M700,865 H718" class="arr"/>
+  <path d="M950,865 H968" class="arr"/>
+  <path d="M1200,865 H1218" class="arr"/>
+
+  <path d="M600,795 V727" class="arr"/>
+  <text x="607" y="785" class="l">reads name_token</text>
+  <path d="M1000,795 V727" class="arr"/>
+  <text x="1007" y="785" class="l">reads entity_cause, ultimate_parent</text>
+  <path d="M1300,795 V727" class="arr"/>
+  <text x="1307" y="785" class="l">reads paths, Registrations</text>
+
+  <path d="M585,940 V988" class="arr"/>
+  <text x="592" y="968" class="l">stores the Portfolio</text>
+  <path d="M835,940 V988" class="arr"/>
+  <text x="842" y="968" class="l">writes the Verdict</text>
+  <path d="M1085,988 V942" class="arr"/>
+  <text x="1092" y="968" class="l">reads Verdicts</text>
+</svg>
