@@ -40,6 +40,19 @@ def entities(con: duckdb.DuckDBPyConnection) -> list[list[str]]:
     ]
 
 
+def gleif(sources: RawSourceBuilder, lei: str, name: str, hq_street: str, hq_zip: str, **extra: str) -> None:
+    sources.lei_record(
+        lei,
+        name,
+        **{
+            "Entity.HeadquartersAddress.FirstAddressLine": hq_street,
+            "Entity.HeadquartersAddress.PostalCode": hq_zip,
+            "Entity.HeadquartersAddress.Region": "US-IL",
+            **extra,
+        },
+    )
+
+
 def test_registrations_with_one_name_at_one_physical_address_are_one_carrier(sources, tmp_path):
     sources.registration("100", "Acme Trucking, Inc.", phy_street="1 MAIN ST", phy_zip="60601", status_code="A")
     sources.registration("200", "ACME TRUCKING INC", phy_street="1 MAIN ST", phy_zip="60601", status_code="I")
@@ -174,26 +187,13 @@ def test_a_phone_shared_by_more_than_ten_names_does_not_corroborate_a_name(sourc
     assert [m for m in matches(con) if m[0] == "fmcsa:100"] == []
 
 
-def test_a_spelling_variant_in_the_same_state_is_found(sources, tmp_path):
+def test_a_spelling_variant_in_the_same_state_is_a_possible_match(sources, tmp_path):
     gleif(sources, "LEI1", "Acme Freight Lines, Inc.", "100 Commerce Drive", "60601")
     sources.registration("100", "ACME FREIGHT LINE INC", phy_zip="61701", phy_state="IL")
 
     con = resolved(sources, tmp_path)
 
     assert matches(con) == [("fmcsa:100", "gleif:LEI1", "Possible")]
-
-
-def gleif(sources: RawSourceBuilder, lei: str, name: str, hq_street: str, hq_zip: str, **extra: str) -> None:
-    sources.lei_record(
-        lei,
-        name,
-        **{
-            "Entity.HeadquartersAddress.FirstAddressLine": hq_street,
-            "Entity.HeadquartersAddress.PostalCode": hq_zip,
-            "Entity.HeadquartersAddress.Region": "US-IL",
-            **extra,
-        },
-    )
 
 
 def test_a_carrier_with_the_name_and_zip_of_a_gleif_record_is_the_same_entity(sources, tmp_path):

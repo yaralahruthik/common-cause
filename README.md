@@ -71,7 +71,7 @@ A pair is *corroborated* when it shares a ZIP (outside an Agent Address), a phon
 
 ### Measured precision
 
-102 Matches were sampled, 17 from each pass and band, with a fixed seed. Each was labelled from the published records by hand, and the labels are committed in [`data/labels/match_labels.csv`](data/labels/match_labels.csv). `make resolve` re-measures them against the rules as they stand.
+102 Matches were sampled, 17 from each pass and band, with a fixed seed. Each was labelled from the published records (by an AI assistant; see below), and the labels are committed in [`data/labels/match_labels.csv`](data/labels/match_labels.csv). `make resolve` re-measures them against the rules as they stand.
 
 | Pass | Band | Same Entity | Different | Unsure | Precision |
 |---|---|---:|---:|---:|---:|
