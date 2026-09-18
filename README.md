@@ -128,7 +128,7 @@ No Entity exceeds 25 records. Two hold more than one LEI and are flagged.
 | `POST /portfolios` | Takes `{"members": [{"name", "state"?, "city"?}]}`, stores the Portfolio and returns each member with its Matches. |
 | `GET /portfolios/{id}` | The members, their Matches, and any Verdicts. |
 | `PUT /portfolios/{id}/members/{member_id}/verdicts/{entity_id}` | Takes `{"verdict": "confirmed" \| "rejected"}` on one of that member's Matches. |
-| `GET /portfolios/{id}/exposure` | Hidden Concentrations ranked by share of the Portfolio, Ownership Status per member, walked/declared disagreements, and the As-Of Date of each source. |
+| `GET /portfolios/{id}/exposure` | Hidden Concentrations ranked by share of the Portfolio (shared jurisdictions last), Ownership Status per member, walked/declared disagreements, and the As-Of Date of each source. |
 
 **Matching a Portfolio name.** The name is normalised the same way Source Records are. If exactly one Entity goes by that normalised name (within the state and city, when given), it is a Firm Match. The member also gets up to 3 Possible Matches: the other Entities whose names score at least 0.8, exact hits held by several Entities included. They stay beside a Firm Match, so an analyst who rejects it still has the near names to confirm. Many names hit twice, once as the FMCSA Registration and once as the GLEIF record that resolution did not firmly join. The state or city then picks one, and the analyst's Verdict settles the rest.
 
@@ -149,9 +149,13 @@ No Entity exceeds 25 records. Two hold more than one LEI and are flagged.
 - a GLEIF headquarters or FMCSA physical address that is not an Agent Address
 - a GLEIF legal jurisdiction
 
-A Carrier with no GLEIF record can only share an address, because FMCSA publishes no ownership. A Concentration is **tentative** unless at least two of its members reach it through a Firm or confirmed Match. A rejected Match drops out. When a member has a Firm or confirmed Match, its other Matches drop out too.
+A Carrier with no GLEIF record can only share an address, because FMCSA publishes no ownership. Two members that resolve to one Entity are one company under two names, so they never form a Concentration on their own.
 
-**Ownership Status** is read from the member's firmly matched Entity. A member with no Firm or confirmed Match, or whose Entity holds no GLEIF record, counts as Undisclosed Parent. The exposure reports how many members are unverifiable out of the whole Portfolio.
+A Concentration is **tentative** unless at least two different Entities reach it through Firm or confirmed Matches. Its share counts only the firmly matched members. The share it would have if every Possible Match held is reported beside it. A rejected Match drops out. When a member has a Firm or confirmed Match, its other Matches drop out too.
 
-**Verdicts** hold for their own Portfolio only. Portfolios and Verdicts are stored in `data/workspace.duckdb`, which is not committed. It is attached to the one connection the API reads the graph through, and a lock makes that connection the only writer.
+Shared jurisdictions are listed after every other Concentration, however large. Most US companies are incorporated in a few states, so a shared jurisdiction is nearly always the largest Concentration and the least telling. In a 25-name food-and-beverage test Portfolio, 52% of it shared Delaware.
+
+**Ownership Status** is read from the member's firmly matched Entity. An Entity that holds no GLEIF record has an Undisclosed Parent. A member with no Firm or confirmed Match has no Ownership Status yet, because it is not yet known which company it is. The exposure reports those members separately, so it can say "ownership unverifiable: N of M matched, K not yet matched".
+
+**Verdicts** hold for their own Portfolio only. Each one is stored against the Source Record the Match was made through, an LEI or a USDOT number. Entity ids are recomputed whenever the snapshot is resolved, so a Verdict keyed to one could quietly stop applying after a rebuild. Portfolios and Verdicts are stored in `data/workspace.duckdb`, which is not committed. It is attached to the one connection the API reads the graph through, and a lock makes that connection the only writer.
 

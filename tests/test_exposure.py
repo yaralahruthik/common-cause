@@ -226,6 +226,31 @@ def test_members_in_one_jurisdiction_are_a_concentration(sources, tmp_path):
 
 
 def test_concentrations_are_ranked_by_share_of_the_portfolio(sources, tmp_path):
+    for lei, name in [("A", "Acme Foods"), ("B", "Brandco Foods"), ("C", "Crate Foods"), ("D", "Delta Foods")]:
+        gleif(sources, lei, f"{name} Inc")
+    gleif(sources, "E", "Echo Foods Inc")
+    sources.relationship("B", "A", DIRECT)
+    sources.relationship("C", "A", DIRECT)
+    sources.relationship("E", "D", DIRECT)
+    graph = opened(sources, tmp_path)
+
+    portfolio_id = graph.create_portfolio(
+        [
+            Member("Delta Foods"),
+            Member("Echo Foods"),
+            Member("Acme Foods"),
+            Member("Brandco Foods"),
+            Member("Crate Foods"),
+        ]
+    )
+
+    assert [(c.label, c.share) for c in graph.exposure(portfolio_id).concentrations] == [
+        ("Acme Foods Inc", 3 / 5),
+        ("Delta Foods Inc", 2 / 5),
+    ]
+
+
+def test_a_shared_jurisdiction_ranks_after_ownership_and_address_however_large(sources, tmp_path):
     for lei, name in [("A", "Acme Foods Inc"), ("B", "Brandco Foods Inc"), ("C", "Zenith Foods Inc")]:
         gleif(sources, lei, name, **{"Entity.LegalJurisdiction": "US-DE"})
     sources.relationship("B", "A", DIRECT)
@@ -234,9 +259,38 @@ def test_concentrations_are_ranked_by_share_of_the_portfolio(sources, tmp_path):
     portfolio_id = graph.create_portfolio([Member("Acme Foods"), Member("Brandco Foods"), Member("Zenith Foods")])
 
     assert concentrations(graph, portfolio_id) == [
-        ("Jurisdiction", "US-DE", [1, 2, 3], False),
         ("Ultimate Parent", "Acme Foods Inc", [1, 2], False),
+        ("Jurisdiction", "US-DE", [1, 2, 3], False),
     ]
+
+
+def test_two_members_matched_to_one_entity_are_not_a_concentration(sources, tmp_path):
+    gleif(sources, "LEI1", "Acme Foods Inc", **{"Entity.LegalJurisdiction": "US-DE"})
+    graph = opened(sources, tmp_path)
+
+    portfolio_id = graph.create_portfolio([Member("Acme Foods"), Member("The Acme Foods Company")])
+
+    assert concentrations(graph, portfolio_id) == []
+
+
+def test_the_share_counts_members_matched_firmly_and_says_what_it_would_be_if_possible_matches_hold(sources, tmp_path):
+    gleif(sources, "HOLD", "Acme Holdings Inc")
+    gleif(sources, "SUB", "Brandco Foods LLC")
+    gleif(sources, "CRATE1", "Crate Foods LLC")
+    gleif(sources, "CRATE2", "Crate Foods Inc")
+    sources.relationship("SUB", "HOLD", DIRECT)
+    sources.relationship("CRATE1", "HOLD", DIRECT)
+    graph = opened(sources, tmp_path)
+
+    portfolio_id = graph.create_portfolio([Member("Acme Holdings"), Member("Brandco Foods"), Member("Crate Foods")])
+
+    [concentration] = graph.exposure(portfolio_id).concentrations
+    assert (concentration.share, concentration.share_if_possible_matches_hold, concentration.tentative) == (
+        2 / 3,
+        1.0,
+        False,
+    )
+    assert [(m.member_id, m.firm) for m in concentration.members] == [(1, True), (2, True), (3, False)]
 
 
 def test_a_concentration_that_depends_on_a_possible_match_is_tentative(sources, tmp_path):
@@ -297,6 +351,21 @@ def test_a_verdict_holds_for_its_own_portfolio_only_and_survives_a_restart(sourc
     assert len(concentrations(graph, untouched)) == 1
 
 
+def test_a_verdict_survives_a_rebuild_that_changes_the_entity_it_was_given_on(sources, tmp_path):
+    gleif(sources, "LEI1", "Acme Foods Inc")
+    before = built_snapshot(sources, tmp_path / "before")
+    sources.registration("100", "ACME FOODS INC", phy_street="9 Yard Road", phy_zip="60601", phy_state="IL")
+    after = built_snapshot(sources, tmp_path / "after")
+    graph = Graph.open(before, tmp_path / "state.duckdb")
+    portfolio_id = graph.create_portfolio([Member("Acme Foods")])
+    graph.record_verdict(portfolio_id, 1, "gleif:LEI1", "rejected")
+    graph.close()
+
+    graph = Graph.open(after, tmp_path / "state.duckdb")
+
+    assert [(m.entity_id, m.verdict) for m in graph.portfolio(portfolio_id)[0].matches] == [("fmcsa:100", "rejected")]
+
+
 def test_a_verdict_on_an_entity_the_member_was_not_matched_to_is_refused(sources, tmp_path):
     gleif(sources, "LEI1", "Acme Foods Inc")
     gleif(sources, "LEI2", "Zenith Foods Inc")
@@ -314,7 +383,7 @@ def test_a_verdict_on_an_entity_the_member_was_not_matched_to_is_refused(sources
 # Ownership Status
 
 
-def test_unverifiable_ownership_counts_undisclosed_parents_and_members_not_firmly_matched(sources, tmp_path):
+def test_unverifiable_ownership_counts_undisclosed_parents_and_members_not_matched_apart(sources, tmp_path):
     gleif(sources, "HOLD", "Acme Holdings Inc")
     gleif(sources, "SUB", "Brandco Foods LLC")
     gleif(sources, "OWNED", "Owned By People Inc")
@@ -342,9 +411,9 @@ def test_unverifiable_ownership_counts_undisclosed_parents_and_members_not_firml
         (2, "Declared Independent", "exception: NATURAL_PERSONS"),
         (3, "Undisclosed Parent", "exception: NON_PUBLIC"),
         (4, "Undisclosed Parent", "no GLEIF record"),
-        (5, "Undisclosed Parent", "no Firm Match"),
+        (5, None, "no Firm Match"),
     ]
-    assert (ownership.unverifiable, ownership.total) == (3, 5)
+    assert (ownership.unverifiable, ownership.matched, ownership.unmatched, ownership.total) == (2, 4, 1, 5)
 
 
 def test_a_member_whose_walked_and_declared_ultimate_parents_disagree_is_counted(sources, tmp_path):

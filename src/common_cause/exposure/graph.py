@@ -27,7 +27,13 @@ VERDICTS = ("confirmed", "rejected")
 # Common Causes in the order they are listed when their share of the Portfolio ties.
 CAUSE_KINDS = ["Ultimate Parent", "Address", "Jurisdiction"]
 
-# Portfolios and Verdicts. Members are numbered from 1 in the order they were given.
+# Listed after every other Common Cause, however large its share: most US companies are incorporated in a handful of
+# states, so a shared jurisdiction is nearly always the largest concentration and the least telling one.
+LAST_CAUSE_KIND = "Jurisdiction"
+
+# Portfolios and Verdicts. Members are numbered from 1 in the order they were given. A Verdict is stored against the
+# Source Record the Match was made through, not the Entity: Entity ids are recomputed whenever the snapshot is
+# resolved, while a record id (an LEI or a USDOT number) is not.
 WORKSPACE_SQL = """
 create table if not exists workspace.portfolio (portfolio_id varchar primary key, created_at timestamp);
 create table if not exists workspace.portfolio_member (
@@ -35,8 +41,8 @@ create table if not exists workspace.portfolio_member (
     primary key (portfolio_id, member_id)
 );
 create table if not exists workspace.verdict (
-    portfolio_id varchar, member_id integer, entity_id varchar, verdict varchar, decided_at timestamp,
-    primary key (portfolio_id, member_id, entity_id)
+    portfolio_id varchar, member_id integer, record_id varchar, verdict varchar, decided_at timestamp,
+    primary key (portfolio_id, member_id, record_id)
 );
 """
 
@@ -121,6 +127,14 @@ best as (
 ),
 counted as (
     select *, count(*) filter (where exact) over (partition by member_id) as exact_entities from best
+),
+-- The latest Verdict on any record of the Entity as it is resolved now.
+entity_verdict as (
+    select verdict.member_id, entity_member.entity_id, arg_max(verdict.verdict, verdict.decided_at) as verdict
+    from workspace.verdict as verdict
+    join entity_member using (record_id)
+    where verdict.portfolio_id = $portfolio
+    group by all
 )
 select
     counted.member_id,
@@ -140,14 +154,19 @@ select
         end,
         case when searched_in <> '' then 'searched within ' || searched_in end
     ) as evidence,
-    verdict.verdict
+    entity_verdict.verdict
 from counted
-left join workspace.verdict as verdict
-    on verdict.portfolio_id = $portfolio
-    and verdict.member_id = counted.member_id
-    and verdict.entity_id = counted.entity_id
+left join entity_verdict
+    on entity_verdict.member_id = counted.member_id and entity_verdict.entity_id = counted.entity_id
 qualify row_number() over (partition by counted.member_id, band order by score desc, counted.entity_id)
     <= $max_possible
+"""
+
+# A new Verdict on an Entity replaces every earlier one the member was given on any of its records.
+REPLACED_VERDICT_SQL = """
+delete from workspace.verdict
+where portfolio_id = $portfolio and member_id = $member
+    and record_id in (select record_id from entity_member where entity_id = $entity)
 """
 
 # What the analyst's Verdicts leave standing: a Firm or confirmed Match holds and hides the member's other
@@ -160,20 +179,25 @@ where verdict is distinct from 'rejected'
 qualify firm or not bool_or(firm) over (partition by member_id)
 """
 
-# A Hidden Concentration is a Common Cause shared by two or more members. It is tentative unless two of them
-# reach it through Firm or confirmed Matches.
+# A Hidden Concentration is a Common Cause shared by two or more members that are different Entities: two names for
+# one company are not independent to begin with. It is tentative unless two different Entities reach it through Firm
+# or confirmed Matches. Its share counts only firmly matched members; the share it would have if every Possible
+# Match held is given beside it, and breaks ties.
 CONCENTRATION_SQL = """
 select
     kind,
     key,
     any_value(label) as label,
-    count(distinct member_id) / $total as share,
-    count(distinct member_id) filter (where firm) < 2 as tentative
+    count(distinct member_id) filter (where firm) / $total as share,
+    count(distinct member_id) / $total as share_if_possible_matches_hold,
+    count(distinct member_id) filter (where firm) < 2 or count(distinct entity_id) filter (where firm) < 2
+        as tentative
 from member_entity
 join entity_cause using (entity_id)
 group by kind, key
-having count(distinct member_id) >= 2
-order by share desc, tentative, list_position($kinds, kind), label
+having count(distinct member_id) >= 2 and count(distinct entity_id) >= 2
+order by kind = $last_kind, share desc, share_if_possible_matches_hold desc, tentative, list_position($kinds, kind),
+    label
 """
 
 # Each member of each concentration, firmest Entity first, with the ownership path from the member to the
@@ -219,8 +243,9 @@ order by member_cause.member_id
 """
 
 # Ownership Status per member, from the LEIs of its Firm or confirmed Entity. An Entity holding several LEIs is
-# given the least verifiable of their statuses. A member with no firm Entity, or one with no GLEIF record, has an
-# Undisclosed Parent: nothing about its ownership is known.
+# given the least verifiable of their statuses, and one with no GLEIF record has an Undisclosed Parent: nothing
+# about its ownership is known. A member with no firm Entity has no Ownership Status yet, because it is not yet
+# known which company it is.
 MEMBER_OWNERSHIP_SQL = """
 with firm_status as (
     select
@@ -240,7 +265,7 @@ with firm_status as (
 select
     member_id,
     member.name,
-    coalesce(known.status, 'Undisclosed Parent') as status,
+    case when matched then coalesce(known.status, 'Undisclosed Parent') end as status,
     case when matched is null then 'no Firm Match' else coalesce(known.basis, 'no GLEIF record') end as basis
 from workspace.portfolio_member as member
 left join firm_status using (member_id)
@@ -321,7 +346,9 @@ class Concentration:
     kind: str
     key: str
     label: str
+    # Members matched firmly, as a share of the Portfolio; and the share if every Possible Match held.
     share: float
+    share_if_possible_matches_hold: float
     tentative: bool
     members: list[ConcentrationMember]
 
@@ -330,7 +357,8 @@ class Concentration:
 class MemberOwnership:
     member_id: int
     name: str
-    status: str
+    # None until the member has a Firm or confirmed Match.
+    status: str | None
     basis: str
 
 
@@ -346,6 +374,10 @@ class Disagreement:
 @dataclass(frozen=True)
 class Ownership:
     total: int
+    # Members with a Firm or confirmed Match, and those without one.
+    matched: int
+    unmatched: int
+    # Matched members whose ownership cannot be verified: an Undisclosed Parent.
     unverifiable: int
     members: list[MemberOwnership]
     disagreements: list[Disagreement]
@@ -422,21 +454,25 @@ class Graph:
         with self._lock:
             self._match(portfolio_id)
             matched = self._con.execute(
-                "select count(*) from portfolio_match where member_id = ? and entity_id = ?", [member_id, entity_id]
-            ).fetchall()[0][0]
+                "select record_id from portfolio_match where member_id = ? and entity_id = ?", [member_id, entity_id]
+            ).fetchall()
             if not matched:
                 raise LookupError(f"member {member_id} has no Match to {entity_id}")
+            parameters = {"portfolio": portfolio_id, "member": member_id, "entity": entity_id}
+            self._con.begin()
+            self._con.execute(REPLACED_VERDICT_SQL, parameters)
             self._con.execute(
-                "insert or replace into workspace.verdict values (?, ?, ?, ?, now())",
-                [portfolio_id, member_id, entity_id, verdict],
+                "insert into workspace.verdict values ($portfolio, $member, $record, $verdict, now())",
+                {"portfolio": portfolio_id, "member": member_id, "record": matched[0][0], "verdict": verdict},
             )
+            self._con.commit()
 
     def exposure(self, portfolio_id: str) -> Exposure:
         """Hidden Concentrations ranked by share of the Portfolio, and how much of its ownership is unverifiable."""
         with self._lock:
             total = self._match(portfolio_id)
             self._con.execute(MEMBER_ENTITY_SQL)
-            groups = self._rows(CONCENTRATION_SQL, {"total": total, "kinds": CAUSE_KINDS})
+            groups = self._rows(CONCENTRATION_SQL, {"total": total, "kinds": CAUSE_KINDS, "last_kind": LAST_CAUSE_KIND})
             members: dict[tuple[str, str], list[ConcentrationMember]] = {}
             for row in self._rows(CONCENTRATION_MEMBER_SQL, {"portfolio": portfolio_id}):
                 path = [PathStep(**step) for step in row.pop("path")]
@@ -455,6 +491,8 @@ class Graph:
             concentrations=[Concentration(**g, members=members[(g["kind"], g["key"])]) for g in groups],
             ownership=Ownership(
                 total=total,
+                matched=sum(m.status is not None for m in ownership),
+                unmatched=sum(m.status is None for m in ownership),
                 unverifiable=sum(m.status == "Undisclosed Parent" for m in ownership),
                 members=ownership,
                 disagreements=disagreements,

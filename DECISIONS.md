@@ -63,6 +63,8 @@ Refined after reading real pairs (measured precision is in the README):
 
 **Cost.** A real industrial park with fifteen tenants is discounted too, and that is the motivating example. Geocoding plus parcel data would separate the two cases; out of scope.
 
+**Jurisdiction is ranked last.** A shared legal jurisdiction is listed after every Ultimate Parent and address Concentration, however large its share. In a 25-name food-and-beverage test Portfolio, 52% of it was incorporated in Delaware. Ranked by share alone, that would be the headline finding, and it tells an analyst almost nothing. It stays in the list because a change in one state's law does reach every company incorporated there.
+
 ## 6. Ultimate Parent: walk the chain, do not trust the shortcut
 
 **Chose.** Walk direct Ownership Links to the top. Fall back to the **Declared Ultimate Parent** where the chain breaks. Count and surface disagreements.
