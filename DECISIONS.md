@@ -80,7 +80,7 @@ See `docs/adr/0001-duckdb-as-the-graph-store.md`.
 
 ## 9. Stack: FastAPI and React
 
-**Chose.** FastAPI and React with TypeScript, the stack the target team already runs. No strong counter-argument for this shape of application. The alternative considered was a single Next.js application (one deploy), rejected because the resolution work wants Python's data tooling next to the database.
+**Chose.** FastAPI and React with TypeScript. Python keeps the resolution work next to the database and its data tooling; a typed frontend keeps three screens of match evidence honest. No strong counter-argument for this shape of application. The alternative considered was a single Next.js application (one deploy), rejected because the resolution work wants Python's data tooling next to the database.
 
 ## Cut order, decided in advance
 
