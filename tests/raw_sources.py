@@ -79,6 +79,7 @@ CENSUS_HEADER = [
     "company_officer_1",
     "company_officer_2",
     "prior_revoke_dot_number",
+    "mcs150_date",
 ]
 
 OOS_HEADER = ["dot_number", "legal_name", "dba_name", "oos_date", "oos_reason", "status", "rescind_date"]
@@ -145,8 +146,18 @@ class RawSourceBuilder:
     def registration(self, dot_number: str, name: str, power_units: str = "12", **extra: str) -> None:
         self.census.append({"dot_number": dot_number, "legal_name": name, "power_units": power_units, **extra})
 
-    def oos_order(self, dot_number: str, oos_date: str, reason: str = "Unsatisfactory = Unfit") -> None:
-        self.oos.append({"dot_number": dot_number, "oos_date": oos_date, "oos_reason": reason, "status": "ACTIVE"})
+    def oos_order(
+        self, dot_number: str, oos_date: str, reason: str = "Unsatisfactory = Unfit", rescind_date: str = ""
+    ) -> None:
+        self.oos.append(
+            {
+                "dot_number": dot_number,
+                "oos_date": oos_date,
+                "oos_reason": reason,
+                "status": "ACTIVE",
+                "rescind_date": rescind_date,
+            }
+        )
 
     def write(self, directory: Path) -> RawSources:
         census_path = directory / "census.csv"

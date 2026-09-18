@@ -427,3 +427,86 @@ def test_a_member_whose_walked_and_declared_ultimate_parents_disagree_is_counted
 
     disagreements = graph.exposure(portfolio_id).ownership.disagreements
     assert [(d.member_id, d.walked_lei, d.declared_lei) for d in disagreements] == [(1, "B", "ELSEWHERE")]
+
+
+def test_members_affected_counts_firm_members_of_firm_concentrations_other_than_jurisdiction(sources, tmp_path):
+    gleif(sources, "HOLD", "Acme Holdings Inc")
+    gleif(sources, "SUB", "Brandco Foods LLC")
+    sources.relationship("SUB", "HOLD", DIRECT)
+    gleif(sources, "PEP", "Pepco Foods Inc")
+    gleif(sources, "XYLO1", "Xylo Juice LLC")
+    gleif(sources, "XYLO2", "Xylo Juice Inc", street="1 Other Road", zip5="10001")
+    sources.relationship("XYLO1", "PEP", DIRECT)
+    gleif(sources, "D", "Delta Foods Inc", **{"Entity.LegalJurisdiction": "US-DE"})
+    gleif(sources, "E", "Echo Foods Inc", **{"Entity.LegalJurisdiction": "US-DE"})
+    graph = opened(sources, tmp_path)
+
+    portfolio_id = graph.create_portfolio(
+        [Member(name) for name in ["Acme Holdings", "Brandco Foods", "Pepco Foods", "Xylo Juice", "Delta", "Echo"]]
+    )
+
+    exposure = graph.exposure(portfolio_id)
+    # Pepco Foods is matched firmly, but its only concentration rests on Xylo Juice, which is not.
+    assert (exposure.affected, exposure.affected_if_possible_matches_hold) == (2, 4)
+
+
+def test_a_concentration_has_an_id_that_survives_a_restart(sources, tmp_path):
+    gleif(sources, "HOLD", "Acme Holdings Inc")
+    gleif(sources, "SUB", "Brandco Foods LLC")
+    sources.relationship("SUB", "HOLD", DIRECT)
+    snapshot_dir = built_snapshot(sources, tmp_path)
+    graph = Graph.open(snapshot_dir, tmp_path / "state.duckdb")
+    portfolio_id = graph.create_portfolio([Member("Acme Holdings"), Member("Brandco Foods")])
+    [before] = graph.exposure(portfolio_id).concentrations
+    graph.close()
+
+    [after] = Graph.open(snapshot_dir, tmp_path / "state.duckdb").exposure(portfolio_id).concentrations
+
+    assert before.id == after.id
+    assert before.id.isalnum()
+
+
+def test_a_match_lists_every_record_of_the_entity_it_points_to(sources, tmp_path):
+    gleif(sources, "LEI1", "Acme Foods Inc", street="9 Yard Road", zip5="60601")
+    sources.registration("100", "ACME FOODS INC", phy_street="9 YARD ROAD", phy_zip="60601", phy_state="IL")
+    graph = opened(sources, tmp_path)
+
+    portfolio_id = graph.create_portfolio([Member("Acme Foods")])
+
+    [match] = graph.portfolio(portfolio_id)[0].matches
+    assert match.entity_records == ["fmcsa:100", "gleif:LEI1"]
+
+
+def test_clearing_a_verdict_restores_the_match_as_it_was(sources, tmp_path):
+    gleif(sources, "HOLD", "Acme Holdings Inc")
+    gleif(sources, "SUB", "Brandco Foods LLC")
+    sources.relationship("SUB", "HOLD", DIRECT)
+    graph = opened(sources, tmp_path)
+    portfolio_id = graph.create_portfolio([Member("Acme Holdings"), Member("Brandco Foods")])
+    graph.record_verdict(portfolio_id, 2, "gleif:SUB", "rejected")
+
+    graph.clear_verdict(portfolio_id, 2, "gleif:SUB")
+
+    assert [(m.entity_id, m.verdict) for m in graph.portfolio(portfolio_id)[1].matches] == [("gleif:SUB", None)]
+    assert len(graph.exposure(portfolio_id).concentrations) == 1
+    with pytest.raises(LookupError):
+        graph.clear_verdict(portfolio_id, 2, "gleif:HOLD")
+
+
+def test_a_member_can_be_searched_again_under_another_name(sources, tmp_path):
+    gleif(sources, "LEI1", "Acme Foods Inc")
+    sources.registration("100", "ACME FOODS LLC", phy_street="9 ELM ST", phy_zip="73301", phy_state="TX")
+    graph = opened(sources, tmp_path)
+    portfolio_id = graph.create_portfolio([Member("Zenith Hauling")])
+    assert matched(graph, portfolio_id) == [[]]
+
+    graph.update_member(portfolio_id, 1, Member("Acme Foods", state="TX"))
+
+    [member] = graph.portfolio(portfolio_id)
+    assert (member.name, member.state, [(m.entity_id, m.band) for m in member.matches]) == (
+        "Acme Foods",
+        "TX",
+        [("fmcsa:100", "Firm")],
+    )
+    with pytest.raises(LookupError):
+        graph.update_member(portfolio_id, 2, Member("Acme Foods"))

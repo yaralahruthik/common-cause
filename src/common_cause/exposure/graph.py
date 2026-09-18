@@ -5,6 +5,7 @@ Parents). Portfolios and Verdicts are the only writes; they live in a separate D
 connection, and a lock makes that connection the single writer (docs/adr/0001-duckdb-as-the-graph-store.md).
 """
 
+import hashlib
 import threading
 import uuid
 from dataclasses import dataclass
@@ -17,7 +18,7 @@ import duckdb
 from common_cause.exposure.ownership import build_ownership
 from common_cause.ingest.snapshot import load_snapshot
 from common_cause.resolve import resolve
-from common_cause.resolve.resolution import POSSIBLE_NAME_SCORE
+from common_cause.resolve.resolution import AGENT_THRESHOLD, POSSIBLE_NAME_SCORE
 
 # A Portfolio name without a unique exact hit is offered at most this many Possible Matches.
 MAX_POSSIBLE_MATCHES = 3
@@ -36,6 +37,7 @@ LAST_CAUSE_KIND = "Jurisdiction"
 # resolved, while a record id (an LEI or a USDOT number) is not.
 WORKSPACE_SQL = """
 create table if not exists workspace.portfolio (portfolio_id varchar primary key, created_at timestamp);
+alter table workspace.portfolio add column if not exists sample boolean default false;
 create table if not exists workspace.portfolio_member (
     portfolio_id varchar, member_id integer, name varchar, state varchar, city varchar,
     primary key (portfolio_id, member_id)
@@ -135,6 +137,11 @@ entity_verdict as (
     join entity_member using (record_id)
     where verdict.portfolio_id = $portfolio
     group by all
+),
+entity_records as (
+    select entity_id, list(record_id order by record_id) as entity_records
+    from entity_member semi join counted using (entity_id)
+    group by entity_id
 )
 select
     counted.member_id,
@@ -154,10 +161,12 @@ select
         end,
         case when searched_in <> '' then 'searched within ' || searched_in end
     ) as evidence,
-    entity_verdict.verdict
+    entity_verdict.verdict,
+    entity_records.entity_records
 from counted
 left join entity_verdict
     on entity_verdict.member_id = counted.member_id and entity_verdict.entity_id = counted.entity_id
+left join entity_records on entity_records.entity_id = counted.entity_id
 qualify row_number() over (partition by counted.member_id, band order by score desc, counted.entity_id)
     <= $max_possible
 """
@@ -200,8 +209,9 @@ order by kind = $last_kind, share desc, share_if_possible_matches_hold desc, ten
     label
 """
 
-# Each member of each concentration, firmest Entity first, with the ownership path from the member to the
-# Ultimate Parent when that is the cause.
+# Each member of each concentration, firmest Entity first. When the cause is an Ultimate Parent, the ownership path
+# from the member up to it, each hop with its jurisdiction. The path ends at the Ultimate Parent; a walk that broke
+# off before reaching it (a missing direct link) ends where it stopped and then at the declared one; `basis` says so.
 CONCENTRATION_MEMBER_SQL = """
 with member_cause as (
     select kind, key, member_id, member.name, entity_id, firm
@@ -212,7 +222,17 @@ with member_cause as (
     qualify row_number() over (partition by kind, key, member_id order by firm desc, entity_id) = 1
 ),
 walked as (
-    select entity_id, ultimate_parent_lei as key, arg_min(path, len(path)) as path
+    select
+        entity_id,
+        ultimate_parent_lei as key,
+        arg_min(
+            {
+                'path': case when chain_break = 'cycle' then path[1:len(path) - 1] else path end,
+                'basis': basis,
+                'declared': declared_ultimate_parent_lei
+            },
+            len(path)
+        ) as walk
     from member_entity
     join entity_member using (entity_id)
     join source_record using (record_id)
@@ -220,13 +240,28 @@ walked as (
     where source_record.source = 'GLEIF'
     group by all
 ),
+reaching as (
+    select
+        entity_id,
+        key,
+        -- Inside a cycle the Ultimate Parent can be any company on it, so the path stops where it first reaches it.
+        case
+            when list_position(walk.path, key) > 0 then walk.path[1:list_position(walk.path, key)]
+            else list_append(walk.path, key)
+        end as path,
+        walk.basis,
+        walk.declared
+    from walked
+),
 step as (
-    select entity_id, key, n, lei, legal_name
-    from (select entity_id, key, unnest(path) as lei, unnest(range(len(path))) as n from walked)
+    select entity_id, key, n, lei, legal_name, nullif(legal_jurisdiction, '') as jurisdiction
+    from (select entity_id, key, unnest(path) as lei, unnest(range(len(path))) as n from reaching)
     left join gleif_record using (lei)
 ),
 named_path as (
-    select entity_id, key, list({'lei': lei, 'name': legal_name} order by n) as path from step group by all
+    select entity_id, key, list({'lei': lei, 'name': legal_name, 'jurisdiction': jurisdiction} order by n) as path
+    from step
+    group by all
 )
 select
     member_cause.kind,
@@ -235,10 +270,13 @@ select
     member_cause.name,
     member_cause.entity_id,
     member_cause.firm,
-    coalesce(named_path.path, []) as path
+    coalesce(named_path.path, []) as path,
+    reaching.basis,
+    reaching.declared as declared_ultimate_parent_lei
 from member_cause
-left join named_path on member_cause.kind = 'Ultimate Parent' and named_path.entity_id = member_cause.entity_id
-    and named_path.key = member_cause.key
+left join reaching on member_cause.kind = 'Ultimate Parent' and reaching.entity_id = member_cause.entity_id
+    and reaching.key = member_cause.key
+left join named_path on named_path.entity_id = reaching.entity_id and named_path.key = reaching.key
 order by member_cause.member_id
 """
 
@@ -285,6 +323,56 @@ where firm and source = 'GLEIF' and disagrees and member.portfolio_id = $portfol
 order by member_id, lei
 """
 
+# The FMCSA Registrations held by each Entity, and the out-of-service orders against each, as published. Active
+# Registrations first, then the largest fleets.
+REGISTRATION_SQL = """
+with orders as (
+    select
+        dot_number,
+        list(
+            {
+                'ordered': try_cast(oos_date as date),
+                'reason': oos_reason,
+                'status': status,
+                'rescinded': try_cast(rescind_date as date)
+            }
+            order by oos_date desc
+        ) as out_of_service
+    from fmcsa_oos_order
+    group by all
+)
+select
+    entity_member.entity_id,
+    census.dot_number,
+    census.legal_name as name,
+    nullif(census.dba_name, '') as dba_name,
+    case census.status_code
+        when 'A' then 'Active' when 'I' then 'Inactive' when 'P' then 'Pending' else census.status_code
+    end as status,
+    try_cast(try_cast(census.power_units as double) as integer) as power_units,
+    census.phy_street as street,
+    census.phy_city as city,
+    census.phy_state as state,
+    census.phy_zip as zip,
+    try_strptime(census.mcs150_date, '%Y%m%d')::date as last_filed,
+    coalesce(orders.out_of_service, []) as out_of_service
+from entity_member
+join source_record using (record_id)
+join fmcsa_census as census on census.dot_number = source_record.source_key
+left join orders using (dot_number)
+where source_record.source = 'FMCSA' and list_contains($entities, entity_member.entity_id)
+order by entity_member.entity_id, census.status_code = 'A' desc, power_units desc nulls last, census.dot_number
+"""
+
+# Every record whose physical or headquarters address is the given one, with the Entity it belongs to.
+SITE_SQL = """
+select record_id, entity_id, name, name_key, street, city, state, postal_code
+from source_record
+join entity_member using (record_id)
+where street_key = $street and zip5 = $zip5
+order by record_id
+"""
+
 AS_OF_SQL = """
 select 'GLEIF', max(as_of_date) from gleif_record
 union all select 'FMCSA census', max(as_of_date) from fmcsa_census
@@ -314,6 +402,8 @@ class Match:
     state: str
     evidence: str
     verdict: str | None
+    # Every Source Record of the Entity: the ids an analyst can look it up by.
+    entity_records: list[str]
 
 
 @dataclass(frozen=True)
@@ -328,7 +418,9 @@ class PortfolioMember:
 @dataclass(frozen=True)
 class PathStep:
     lei: str
+    # None for an LEI the snapshot holds no record of.
     name: str | None
+    jurisdiction: str | None
 
 
 @dataclass(frozen=True)
@@ -339,10 +431,16 @@ class ConcentrationMember:
     firm: bool
     # From the member's LEI up to the Ultimate Parent; empty for other Common Causes.
     path: list[PathStep]
+    # How the Ultimate Parent was found (`walked`, `declared` or `partial walk`), and the one the member's own
+    # registry entry declares. None for other Common Causes.
+    basis: str | None
+    declared_ultimate_parent_lei: str | None
 
 
 @dataclass(frozen=True)
 class Concentration:
+    # Stable for as long as the Common Cause is: derived from its kind and key.
+    id: str
     kind: str
     key: str
     label: str
@@ -384,9 +482,97 @@ class Ownership:
 
 
 @dataclass(frozen=True)
+class OutOfServiceOrder:
+    ordered: date | None
+    reason: str | None
+    # As published: the registry's own status for the order, and the date it was rescinded, if it was.
+    status: str | None
+    rescinded: date | None
+
+
+@dataclass(frozen=True)
+class Registration:
+    dot_number: str
+    name: str
+    dba_name: str | None
+    # Active, Inactive or Pending; the published code where it is none of these.
+    status: str | None
+    power_units: int | None
+    street: str | None
+    city: str | None
+    state: str | None
+    zip: str | None
+    # Date of the last MCS-150 filing.
+    last_filed: date | None
+    out_of_service: list[OutOfServiceOrder]
+
+
+@dataclass(frozen=True)
+class DetailMember:
+    member_id: int
+    name: str
+    entity_id: str
+    firm: bool
+    # The Match that puts the member in the concentration, and, when that Match is not firm, the member's other
+    # Matches still open: the ones the analyst could pick instead.
+    match: Match
+    alternatives: list[Match]
+    ownership_status: str | None
+    ownership_basis: str
+    leis: list[str]
+    path: list[PathStep]
+    basis: str | None
+    declared_ultimate_parent_lei: str | None
+    registrations: list[Registration]
+
+
+@dataclass(frozen=True)
+class Occupant:
+    """A name registered at a shared address that is not in the concentration."""
+
+    name: str
+    record_ids: list[str]
+
+
+@dataclass(frozen=True)
+class Site:
+    street: str | None
+    city: str | None
+    state: str | None
+    zip: str | None
+    # Distinct names registered at the address; more than `agent_threshold` would make it an Agent Address.
+    names_registered: int
+    agent_threshold: int
+    others: list[Occupant]
+
+
+@dataclass(frozen=True)
+class ConcentrationDetail:
+    id: str
+    kind: str
+    key: str
+    label: str
+    total: int
+    share: float
+    share_if_possible_matches_hold: float
+    tentative: bool
+    # Position among the concentrations ranked with it: shared jurisdictions are ranked apart from the rest.
+    rank: int
+    ranked: int
+    members: list[DetailMember]
+    # The shared address, when that is the cause.
+    site: Site | None
+    as_of: dict[str, date]
+
+
+@dataclass(frozen=True)
 class Exposure:
     portfolio_id: str
     members: int
+    # Members matched firmly into a concentration that is itself firm, other than a shared jurisdiction; and how many
+    # members would be in one if every Possible Match held.
+    affected: int
+    affected_if_possible_matches_hold: int
     concentrations: list[Concentration]
     ownership: Ownership
     as_of: dict[str, date]
@@ -416,19 +602,32 @@ class Graph:
         with self._lock:
             self._con.close()
 
-    def create_portfolio(self, members: list[Member]) -> str:
+    def create_portfolio(self, members: list[Member], sample: bool = False) -> str:
+        """Stores a Portfolio; `sample` marks the one the interface offers to someone with no list at hand."""
         if not members:
             raise ValueError("a Portfolio needs at least one member")
         portfolio_id = uuid.uuid4().hex
         with self._lock:
             self._con.begin()
-            self._con.execute("insert into workspace.portfolio values (?, now())", [portfolio_id])
+            self._con.execute(
+                "insert into workspace.portfolio (portfolio_id, created_at, sample) values (?, now(), ?)",
+                [portfolio_id, sample],
+            )
             self._con.executemany(
                 "insert into workspace.portfolio_member values (?, ?, ?, ?, ?)",
                 [[portfolio_id, n, m.name, m.state, m.city] for n, m in enumerate(members, start=1)],
             )
             self._con.commit()
         return portfolio_id
+
+    def is_sample(self, portfolio_id: str) -> bool:
+        with self._lock:
+            found = self._con.execute(
+                "select sample from workspace.portfolio where portfolio_id = ?", [portfolio_id]
+            ).fetchall()
+        if not found:
+            raise LookupError(f"no Portfolio {portfolio_id}")
+        return bool(found[0][0])
 
     def portfolio(self, portfolio_id: str) -> list[PortfolioMember]:
         """Every member with its Matches, best first."""
@@ -447,48 +646,151 @@ class Graph:
             by_member[row.pop("member_id")].append(Match(**row))
         return [PortfolioMember(**m, matches=by_member[m["member_id"]]) for m in members]
 
+    def update_member(self, portfolio_id: str, member_id: int, member: Member) -> None:
+        """Changes the name a member is searched by. Its Verdicts stand: they are on records, not on the name."""
+        with self._lock:
+            updated = self._con.execute(
+                "update workspace.portfolio_member set name = ?, state = ?, city = ? "
+                "where portfolio_id = ? and member_id = ? returning member_id",
+                [member.name, member.state, member.city, portfolio_id, member_id],
+            ).fetchall()
+            if not updated:
+                raise LookupError(f"no member {member_id} in Portfolio {portfolio_id}")
+
     def record_verdict(self, portfolio_id: str, member_id: int, entity_id: str, verdict: str) -> None:
         """Confirms or rejects one of a member's Matches, for this Portfolio only. A new Verdict replaces the old."""
         if verdict not in VERDICTS:
             raise ValueError(f"a Verdict is one of {VERDICTS}")
         with self._lock:
-            self._match(portfolio_id)
-            matched = self._con.execute(
-                "select record_id from portfolio_match where member_id = ? and entity_id = ?", [member_id, entity_id]
-            ).fetchall()
-            if not matched:
-                raise LookupError(f"member {member_id} has no Match to {entity_id}")
-            parameters = {"portfolio": portfolio_id, "member": member_id, "entity": entity_id}
+            record_id = self._matched_record(portfolio_id, member_id, entity_id)
             self._con.begin()
-            self._con.execute(REPLACED_VERDICT_SQL, parameters)
+            self._con.execute(
+                REPLACED_VERDICT_SQL, {"portfolio": portfolio_id, "member": member_id, "entity": entity_id}
+            )
             self._con.execute(
                 "insert into workspace.verdict values ($portfolio, $member, $record, $verdict, now())",
-                {"portfolio": portfolio_id, "member": member_id, "record": matched[0][0], "verdict": verdict},
+                {"portfolio": portfolio_id, "member": member_id, "record": record_id, "verdict": verdict},
             )
             self._con.commit()
+
+    def clear_verdict(self, portfolio_id: str, member_id: int, entity_id: str) -> None:
+        """Withdraws the member's Verdict on one of its Matches, leaving the Match as the rules made it."""
+        with self._lock:
+            self._matched_record(portfolio_id, member_id, entity_id)
+            self._con.execute(
+                REPLACED_VERDICT_SQL, {"portfolio": portfolio_id, "member": member_id, "entity": entity_id}
+            )
+
+    def _matched_record(self, portfolio_id: str, member_id: int, entity_id: str) -> str:
+        """The record a member's Match to an Entity was made through; the caller holds the lock."""
+        self._match(portfolio_id)
+        matched = self._con.execute(
+            "select record_id from portfolio_match where member_id = ? and entity_id = ?", [member_id, entity_id]
+        ).fetchall()
+        if not matched:
+            raise LookupError(f"member {member_id} has no Match to {entity_id}")
+        return matched[0][0]
 
     def exposure(self, portfolio_id: str) -> Exposure:
         """Hidden Concentrations ranked by share of the Portfolio, and how much of its ownership is unverifiable."""
         with self._lock:
-            total = self._match(portfolio_id)
-            self._con.execute(MEMBER_ENTITY_SQL)
-            groups = self._rows(CONCENTRATION_SQL, {"total": total, "kinds": CAUSE_KINDS, "last_kind": LAST_CAUSE_KIND})
-            members: dict[tuple[str, str], list[ConcentrationMember]] = {}
-            for row in self._rows(CONCENTRATION_MEMBER_SQL, {"portfolio": portfolio_id}):
-                path = [PathStep(**step) for step in row.pop("path")]
-                members.setdefault((row.pop("kind"), row.pop("key")), []).append(ConcentrationMember(**row, path=path))
-            ownership = [
-                MemberOwnership(**row) for row in self._rows(MEMBER_OWNERSHIP_SQL, {"portfolio": portfolio_id})
+            return self._exposure(portfolio_id)
+
+    def concentration(self, portfolio_id: str, concentration_id: str) -> ConcentrationDetail:
+        """One Hidden Concentration with what an analyst needs to check it: each member's Match, ownership path,
+        Registrations and out-of-service orders, and the shared site when that is the cause."""
+        with self._lock:
+            exposure = self._exposure(portfolio_id)
+            found = next((c for c in exposure.concentrations if c.id == concentration_id), None)
+            if found is None:
+                raise LookupError(f"no concentration {concentration_id} in Portfolio {portfolio_id}")
+            peers = [
+                c for c in exposure.concentrations if (c.kind == LAST_CAUSE_KIND) == (found.kind == LAST_CAUSE_KIND)
             ]
-            disagreements = [
-                Disagreement(*row)
-                for row in self._con.execute(DISAGREEMENT_SQL, {"portfolio": portfolio_id}).fetchall()
-            ]
-            as_of = dict(self._con.execute(AS_OF_SQL).fetchall())
+            entity_ids = [m.entity_id for m in found.members]
+            matches: dict[int, list[Match]] = {}
+            for row in self._rows(
+                "select * from portfolio_match where list_contains($members, member_id) "
+                "order by member_id, score desc, entity_id",
+                {"members": [m.member_id for m in found.members]},
+            ):
+                matches.setdefault(row.pop("member_id"), []).append(Match(**row))
+            leis: dict[str, list[str]] = dict(
+                self._con.execute(
+                    "select entity_id, list(source_key order by source_key) from entity_member "
+                    "join source_record using (record_id) "
+                    "where source = 'GLEIF' and list_contains($entities, entity_id) group by entity_id",
+                    {"entities": entity_ids},
+                ).fetchall()
+            )
+            registrations: dict[str, list[Registration]] = {}
+            for row in self._rows(REGISTRATION_SQL, {"entities": entity_ids}):
+                orders = [OutOfServiceOrder(**order) for order in row.pop("out_of_service")]
+                registrations.setdefault(row.pop("entity_id"), []).append(Registration(**row, out_of_service=orders))
+            site = self._site(found.key, set(entity_ids)) if found.kind == "Address" else None
+        ownership = {m.member_id: m for m in exposure.ownership.members}
+        members = []
+        for m in found.members:
+            [match] = [x for x in matches[m.member_id] if x.entity_id == m.entity_id]
+            open_matches = [x for x in matches[m.member_id] if x is not match and x.verdict != "rejected"]
+            members.append(
+                DetailMember(
+                    member_id=m.member_id,
+                    name=m.name,
+                    entity_id=m.entity_id,
+                    firm=m.firm,
+                    match=match,
+                    alternatives=[] if m.firm else open_matches,
+                    ownership_status=ownership[m.member_id].status,
+                    ownership_basis=ownership[m.member_id].basis,
+                    leis=leis.get(m.entity_id, []),
+                    path=m.path,
+                    basis=m.basis,
+                    declared_ultimate_parent_lei=m.declared_ultimate_parent_lei,
+                    registrations=registrations.get(m.entity_id, []),
+                )
+            )
+        return ConcentrationDetail(
+            id=found.id,
+            kind=found.kind,
+            key=found.key,
+            label=found.label,
+            total=exposure.members,
+            share=found.share,
+            share_if_possible_matches_hold=found.share_if_possible_matches_hold,
+            tentative=found.tentative,
+            rank=peers.index(found) + 1,
+            ranked=len(peers),
+            members=members,
+            site=site,
+            as_of=exposure.as_of,
+        )
+
+    def _exposure(self, portfolio_id: str) -> Exposure:
+        """Everything `exposure` returns; the caller holds the lock."""
+        total = self._match(portfolio_id)
+        self._con.execute(MEMBER_ENTITY_SQL)
+        groups = self._rows(CONCENTRATION_SQL, {"total": total, "kinds": CAUSE_KINDS, "last_kind": LAST_CAUSE_KIND})
+        members: dict[tuple[str, str], list[ConcentrationMember]] = {}
+        for row in self._rows(CONCENTRATION_MEMBER_SQL, {"portfolio": portfolio_id}):
+            path = [PathStep(**step) for step in row.pop("path")]
+            members.setdefault((row.pop("kind"), row.pop("key")), []).append(ConcentrationMember(**row, path=path))
+        ownership = [MemberOwnership(**row) for row in self._rows(MEMBER_OWNERSHIP_SQL, {"portfolio": portfolio_id})]
+        disagreements = [
+            Disagreement(*row) for row in self._con.execute(DISAGREEMENT_SQL, {"portfolio": portfolio_id}).fetchall()
+        ]
+        as_of = dict(self._con.execute(AS_OF_SQL).fetchall())
+        ranked = [
+            Concentration(id=concentration_id(g["kind"], g["key"]), **g, members=members[(g["kind"], g["key"])])
+            for g in groups
+        ]
+        telling = [c for c in ranked if c.kind != LAST_CAUSE_KIND]
         return Exposure(
             portfolio_id=portfolio_id,
             members=total,
-            concentrations=[Concentration(**g, members=members[(g["kind"], g["key"])]) for g in groups],
+            affected=len({m.member_id for c in telling if not c.tentative for m in c.members if m.firm}),
+            affected_if_possible_matches_hold=len({m.member_id for c in telling for m in c.members}),
+            concentrations=ranked,
             ownership=Ownership(
                 total=total,
                 matched=sum(m.status is not None for m in ownership),
@@ -498,6 +800,24 @@ class Graph:
                 disagreements=disagreements,
             ),
             as_of=as_of,
+        )
+
+    def _site(self, key: str, entity_ids: set[str]) -> Site:
+        street, zip5 = key.rsplit(", ", 1)
+        rows = self._rows(SITE_SQL, {"street": street, "zip5": zip5})
+        here = next(r for r in rows if r["entity_id"] in entity_ids)
+        others: dict[str, Occupant] = {}
+        for row in rows:
+            if row["entity_id"] not in entity_ids and row["name_key"]:
+                others.setdefault(row["name_key"], Occupant(row["name"], [])).record_ids.append(row["record_id"])
+        return Site(
+            street=here["street"],
+            city=here["city"],
+            state=here["state"],
+            zip=here["postal_code"],
+            names_registered=len({r["name_key"] for r in rows if r["name_key"]}),
+            agent_threshold=AGENT_THRESHOLD,
+            others=sorted(others.values(), key=lambda o: o.name),
         )
 
     def _match(self, portfolio_id: str) -> int:
@@ -517,6 +837,10 @@ class Graph:
         cursor = self._con.execute(sql, parameters)
         columns = [d[0] for d in cursor.description]
         return [dict(zip(columns, row, strict=True)) for row in cursor.fetchall()]
+
+
+def concentration_id(kind: str, key: str) -> str:
+    return hashlib.sha256(f"{kind}\n{key}".encode()).hexdigest()[:16]
 
 
 def _sql_string(path: Path) -> str:

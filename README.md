@@ -12,6 +12,8 @@ make ingest     # re-fetch the slice from the live registries and rebuild data/s
 make rebuild    # rebuild data/snapshot/ from the download cache in data/raw/ without fetching
 make resolve    # resolve the snapshot into Entities and print the numbers in "Entity resolution" below
 make serve      # resolve the snapshot and serve the API on http://127.0.0.1:8000 (interactive docs at /docs)
+make web        # build the interface (needs Node.js); `make serve` then serves it at http://127.0.0.1:8000
+make web-test   # typecheck and test the interface
 ```
 
 `make ingest` downloads about 700 MB into `data/raw/` (not committed). Set `SODA_APP_TOKEN` to avoid throttling on the FMCSA API.
@@ -125,10 +127,16 @@ No Entity exceeds 25 records. Two hold more than one LEI and are flagged.
 
 | Endpoint | What it does |
 |---|---|
-| `POST /portfolios` | Takes `{"members": [{"name", "state"?, "city"?}]}`, stores the Portfolio and returns each member with its Matches. |
+| `POST /portfolios` | Takes `{"members": [{"name", "state"?, "city"?}], "sample"?}`, stores the Portfolio and returns each member with its Matches. |
 | `GET /portfolios/{id}` | The members, their Matches, and any Verdicts. |
+| `PUT /portfolios/{id}/members/{member_id}` | Changes the name, state or city a member is searched by, and returns it matched again. |
 | `PUT /portfolios/{id}/members/{member_id}/verdicts/{entity_id}` | Takes `{"verdict": "confirmed" \| "rejected"}` on one of that member's Matches. |
-| `GET /portfolios/{id}/exposure` | Hidden Concentrations ranked by share of the Portfolio (shared jurisdictions last), Ownership Status per member, walked/declared disagreements, and the As-Of Date of each source. |
+| `DELETE /portfolios/{id}/members/{member_id}/verdicts/{entity_id}` | Withdraws that Verdict. |
+| `GET /portfolios/{id}/exposure` | Hidden Concentrations ranked by share of the Portfolio (shared jurisdictions last), each with a stable `id`; how many members are firmly in one (`affected`) and how many would be if every Possible Match held; Ownership Status per member, walked/declared disagreements, and the As-Of Date of each source. |
+| `GET /portfolios/{id}/concentrations/{concentration_id}` | One Concentration for the detail screen: each member's Match (and, if it is not firm, the alternatives), ownership path with every hop's jurisdiction, Registrations with status, power units, address, last MCS-150 filing and out-of-service orders, and the shared site with everyone else registered there. |
+| `GET /sample` | The sample Portfolio, and what a random Portfolio of the same size finds. |
+
+`affected` counts a member only when its own Match is firm and it sits in a firm Concentration other than a shared jurisdiction. A member firmly matched into a Concentration that is tentative because of someone else's Possible Match is not counted.
 
 **Matching a Portfolio name.** The name is normalised the same way Source Records are. If exactly one Entity goes by that normalised name (within the state and city, when given), it is a Firm Match. The member also gets up to 3 Possible Matches: the other Entities whose names score at least 0.8, exact hits held by several Entities included. They stay beside a Firm Match, so an analyst who rejects it still has the near names to confirm. Many names hit twice, once as the FMCSA Registration and once as the GLEIF record that resolution did not firmly join. The state or city then picks one, and the analyst's Verdict settles the rest.
 
@@ -158,4 +166,15 @@ Shared jurisdictions are listed after every other Concentration, however large. 
 **Ownership Status** is read from the member's firmly matched Entity. An Entity that holds no GLEIF record has an Undisclosed Parent. A member with no Firm or confirmed Match has no Ownership Status yet, because it is not yet known which company it is. The exposure reports those members separately, so it can say "ownership unverifiable: N of M matched, K not yet matched".
 
 **Verdicts** hold for their own Portfolio only. Each one is stored against the Source Record the Match was made through, an LEI or a USDOT number. Entity ids are recomputed whenever the snapshot is resolved, so a Verdict keyed to one could quietly stop applying after a rebuild. Portfolios and Verdicts are stored in `data/workspace.duckdb`, which is not committed. It is attached to the one connection the API reads the graph through, and a lock makes that connection the only writer.
+
+## The interface
+
+`web/` is a React and TypeScript app with three screens in a fixed order: Portfolio, Exposure and Concentration detail (`DECISIONS.md` entry 7). `make web` builds it and `make serve` serves it beside the API.
+
+- **Portfolio**: paste names or upload a CSV, or open the sample. Names are grouped into Needs your decision (Possible Matches, each with its evidence), Not found (edit the name and search again) and Matched (with evidence and Ownership Status). Rejecting a match moves the name to Not found, with Undo.
+- **Exposure**: one sentence for the CPO, three figures, the Hidden Concentrations ranked by share, and shared jurisdictions and unverifiable ownership in their own sections. A Concentration that rests on an undecided name is dashed and marked tentative.
+- **Concentration detail**: the ownership tree from each member up to the shared parent, or both members pointing at the shared address; each member's Registrations and out-of-service orders; the As-Of Date of each source. A tentative Concentration asks for the missing Verdict in place.
+
+**The sample is curated.** The 15 food and beverage makers in `src/common_cause/sample.py` were chosen because their records are in the snapshot, so they find what they were chosen to find: 4 Hidden Concentrations plus 1 tentative, affecting 7 of 15. The interface sets beside it a list of 15 companies drawn at random from active FMCSA Registrations that run a private fleet. That list finds none.
+
 
