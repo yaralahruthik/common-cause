@@ -1,4 +1,4 @@
-.PHONY: ingest rebuild resolve test typecheck lint
+.PHONY: ingest rebuild resolve serve test typecheck lint
 
 # Fetch the slice from the live registries and rebuild the committed snapshot in data/snapshot.
 ingest:
@@ -11,6 +11,10 @@ rebuild:
 # Resolve the snapshot into Entities; print match counts, scale signals and measured precision.
 resolve:
 	uv run python -m common_cause.resolve
+
+# Resolve the snapshot and serve the API on http://127.0.0.1:8000 (interactive docs at /docs).
+serve:
+	uv run python -m common_cause.api
 
 test:
 	uv run pytest

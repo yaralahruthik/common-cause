@@ -11,6 +11,7 @@ make test       # run the test suite
 make ingest     # re-fetch the slice from the live registries and rebuild data/snapshot/
 make rebuild    # rebuild data/snapshot/ from the download cache in data/raw/ without fetching
 make resolve    # resolve the snapshot into Entities and print the numbers in "Entity resolution" below
+make serve      # resolve the snapshot and serve the API on http://127.0.0.1:8000 (interactive docs at /docs)
 ```
 
 `make ingest` downloads about 700 MB into `data/raw/` (not committed). Set `SODA_APP_TOKEN` to avoid throttling on the FMCSA API.
@@ -117,4 +118,44 @@ Two blocks exceed the 1,000-record cap and are skipped: names starting `CAPITAL 
 | over 25 | 0 |
 
 No Entity exceeds 25 records. Two hold more than one LEI and are flagged.
+
+## Hidden Concentrations
+
+`common_cause.exposure` finds the Hidden Concentrations in a Portfolio, and `make serve` puts it behind an HTTP API. At start-up the API loads the snapshot, resolves it and walks every ownership chain, which takes about 8 seconds. After that, matching a 25-name Portfolio takes about 40 ms and its exposure about 60 ms.
+
+| Endpoint | What it does |
+|---|---|
+| `POST /portfolios` | Takes `{"members": [{"name", "state"?, "city"?}]}`, stores the Portfolio and returns each member with its Matches. |
+| `GET /portfolios/{id}` | The members, their Matches, and any Verdicts. |
+| `PUT /portfolios/{id}/members/{member_id}/verdicts/{entity_id}` | Takes `{"verdict": "confirmed" \| "rejected"}` on one of that member's Matches. |
+| `GET /portfolios/{id}/exposure` | Hidden Concentrations ranked by share of the Portfolio (shared jurisdictions last), Ownership Status per member, walked/declared disagreements, and the As-Of Date of each source. |
+
+**Matching a Portfolio name.** The name is normalised the same way Source Records are. If exactly one Entity goes by that normalised name (within the state and city, when given), it is a Firm Match. The member also gets up to 3 Possible Matches: the other Entities whose names score at least 0.8, exact hits held by several Entities included. They stay beside a Firm Match, so an analyst who rejects it still has the near names to confirm. Many names hit twice, once as the FMCSA Registration and once as the GLEIF record that resolution did not firmly join. The state or city then picks one, and the analyst's Verdict settles the rest.
+
+**Ultimate Parent.** Direct Ownership Links are walked upward by a recursive CTE, which stops on a cycle or after 20 hops. Where the chain breaks, the Declared Ultimate Parent stands in. Where nothing is declared, the furthest company reached stands in; inside a cycle that is the smallest LEI on it, so every company in the cycle gets the same one. A complete walk that ends somewhere other than the Declared Ultimate Parent is kept, and the disagreement is reported. On the 2026-09-18 snapshot:
+
+| Ultimate Parent found by | Chain break | GLEIF records | Disagreements |
+|---|---|---:|---:|
+| walking direct links | | 524,712 | 2,436 |
+| the Declared Ultimate Parent | missing direct link | 16,287 | |
+| the Declared Ultimate Parent | cycle | 1 | |
+| the furthest company reached | cycle | 3 | |
+
+13,606 of the missing direct links are companies that file an ultimate parent and no direct one. The rest are chains whose top company declares an ultimate parent but has no direct link to it. No chain is longer than 9 hops.
+
+**Common Causes.** Three things can be shared:
+
+- the Ultimate Parent of any of the Entity's LEIs
+- a GLEIF headquarters or FMCSA physical address that is not an Agent Address
+- a GLEIF legal jurisdiction
+
+A Carrier with no GLEIF record can only share an address, because FMCSA publishes no ownership. Two members that resolve to one Entity are one company under two names, so they never form a Concentration on their own.
+
+A Concentration is **tentative** unless at least two different Entities reach it through Firm or confirmed Matches. Its share counts only the firmly matched members. The share it would have if every Possible Match held is reported beside it. A rejected Match drops out. When a member has a Firm or confirmed Match, its other Matches drop out too.
+
+Shared jurisdictions are listed after every other Concentration, however large. Most US companies are incorporated in a few states, so a shared jurisdiction is nearly always the largest Concentration and the least telling. In a 25-name food-and-beverage test Portfolio, 52% of it shared Delaware.
+
+**Ownership Status** is read from the member's firmly matched Entity. An Entity that holds no GLEIF record has an Undisclosed Parent. A member with no Firm or confirmed Match has no Ownership Status yet, because it is not yet known which company it is. The exposure reports those members separately, so it can say "ownership unverifiable: N of M matched, K not yet matched".
+
+**Verdicts** hold for their own Portfolio only. Each one is stored against the Source Record the Match was made through, an LEI or a USDOT number. Entity ids are recomputed whenever the snapshot is resolved, so a Verdict keyed to one could quietly stop applying after a rebuild. Portfolios and Verdicts are stored in `data/workspace.duckdb`, which is not committed. It is attached to the one connection the API reads the graph through, and a lock makes that connection the only writer.
 

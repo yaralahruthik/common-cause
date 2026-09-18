@@ -5,8 +5,10 @@ description = "Finds suppliers and carriers that look independent but share a co
 requires-python = ">=3.13"
 dependencies = [
     "duckdb>=1.5.5",
+    "fastapi>=0.141.1",
     "httpx>=0.28.1",
     "pyarrow>=25.0.1",
+    "uvicorn>=0.53.0",
 ]
 
 [build-system]

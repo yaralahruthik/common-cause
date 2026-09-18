@@ -35,6 +35,7 @@ Refined after reading real pairs (measured precision is in the README):
 - **Brands are not identities.** A trade name carried by more than two different legal names (a franchise, or a group's brand) is not used to match.
 - **Name alone is not enough inside FMCSA.** Two Registrations sharing only a name are not matched at all: 0 of 15 labelled pairs were one Carrier. Against GLEIF, the same pair stays a Possible Match.
 - **One Registration, at most one LEI.** A Registration as strongly matched to several GLEIF records is matched to none of them firmly.
+- **Portfolio names follow a looser rule.** A Portfolio name is Firm when exactly one Entity has its exact normalised name, within the state and city when the analyst gives them. It needs no corroborating signal, because the analyst typed a name and usually nothing else to corroborate it with. Near names scoring at least 0.8 are offered as up to three Possible Matches beside it. This is safe only because the analyst sees every Match with its evidence, and a Verdict can reject it; a wrong Firm Match between two Source Records is never shown that way.
 
 **Against.** *Splink* (Fellegi-Sunter on DuckDB): more principled, but its unsupervised EM training is known to behave badly when true matches are a tiny fraction of candidate pairs, which is the FMCSA-to-GLEIF case, and learned weights are harder to defend than a rule I wrote. *Embeddings*: `ABC Trucking` and `ABD Trucking` are near neighbours; that is the wrong notion of similar. *The `rapidfuzz` community extension*: works, but community extensions download at runtime and that is a fragile step in a clean clone. *Destructive merging*: reasoning about a tidied copy hides exactly the mess the analyst needs to see.
 
@@ -61,6 +62,8 @@ Refined after reading real pairs (measured precision is in the README):
 **Against.** Using legal and mailing addresses: thousands of unrelated companies share one registered-agent address in Delaware, and a naive rule flags half of any Portfolio as one concentration.
 
 **Cost.** A real industrial park with fifteen tenants is discounted too, and that is the motivating example. Geocoding plus parcel data would separate the two cases; out of scope.
+
+**Jurisdiction is ranked last.** A shared legal jurisdiction is listed after every Ultimate Parent and address Concentration, however large its share. In a 25-name food-and-beverage test Portfolio, 52% of it was incorporated in Delaware. Ranked by share alone, that would be the headline finding, and it tells an analyst almost nothing. It stays in the list because a change in one state's law does reach every company incorporated there.
 
 ## 6. Ultimate Parent: walk the chain, do not trust the shortcut
 

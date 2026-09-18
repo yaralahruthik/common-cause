@@ -6,6 +6,7 @@ from pathlib import Path
 
 import duckdb
 
+from common_cause.exposure.ownership import MAX_CHAIN_HOPS, build_ownership, chain_summary
 from common_cause.ingest.snapshot import DEFAULT_SNAPSHOT_DIR, load_snapshot
 from common_cause.resolve import report
 from common_cause.resolve.resolution import MAX_BLOCK_RECORDS, OVERSIZED_ENTITY_RECORDS, resolve
@@ -72,6 +73,12 @@ def main() -> None:
     print(f"Entities holding more than one LEI: {sum(row[4] for row in flagged)}")
     for entity_id, records, leis, _, _ in flagged:
         print(f"  {entity_id}: {records} records, {leis} LEIs")
+
+    build_ownership(con)
+    print(f"\n| Ultimate Parent found by | Chain break (cap {MAX_CHAIN_HOPS} hops) | GLEIF records | Disagreements |")
+    print("|---|---|---:|---:|")
+    for basis, chain_break, records, disagreements in chain_summary(con):
+        print(f"| {basis} | {chain_break} | {records:,} | {disagreements:,} |")
 
     if args.labels.exists():
         print("\n| Pass | Band | Same Entity | Different | Unsure | Precision |")

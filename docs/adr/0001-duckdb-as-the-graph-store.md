@@ -13,4 +13,6 @@ The graph (~600k Entities, ~250k Ownership Links in the slice) lives in a single
 
 ## Consequences
 
-Single-writer: Verdicts are the only runtime writes and must go through one connection. Entity resolution runs as SQL inside the engine rather than as Python loops.
+Single-writer: Portfolios and Verdicts are the only runtime writes and must go through one connection. Entity resolution runs as SQL inside the engine rather than as Python loops.
+
+As built, the graph is not itself kept in a DuckDB file. The committed Parquet snapshot is loaded into an in-memory database at start-up and resolved there, so a rule change needs no migration. Portfolios and Verdicts, which must outlive a restart, live in a separate DuckDB file (`data/workspace.duckdb`) attached to that same connection, and a lock makes the connection the only writer. Each request also rebuilds a few temporary tables on that connection, which the lock serialises too.
