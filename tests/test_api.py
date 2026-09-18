@@ -36,8 +36,8 @@ def test_a_portfolio_is_matched_judged_and_its_exposure_reported(client):
         ("Ultimate Parent", "Acme Holdings Inc", False)
     ]
     assert exposure["concentrations"][0]["members"][1]["path"] == [
-        {"lei": "SUB", "name": "Brandco Foods LLC"},
-        {"lei": "HOLD", "name": "Acme Holdings Inc"},
+        {"lei": "SUB", "name": "Brandco Foods LLC", "jurisdiction": None},
+        {"lei": "HOLD", "name": "Acme Holdings Inc", "jurisdiction": None},
     ]
     assert exposure["as_of"]["GLEIF"] == "2026-09-18"
 
@@ -70,3 +70,59 @@ def test_a_verdict_must_confirm_or_reject_and_a_portfolio_needs_a_member(client)
 
     assert maybe.status_code == 422
     assert client.post("/portfolios", json={"members": []}).status_code == 422
+
+
+def test_a_concentration_is_read_on_its_own_and_undoing_a_verdict_brings_it_back(client):
+    portfolio_id = client.post(
+        "/portfolios", json={"members": [{"name": "Acme Holdings"}, {"name": "Brandco Foods"}]}
+    ).json()["portfolio_id"]
+    [concentration] = client.get(f"/portfolios/{portfolio_id}/exposure").json()["concentrations"]
+    detail_url = f"/portfolios/{portfolio_id}/concentrations/{concentration['id']}"
+
+    detail = client.get(detail_url)
+
+    assert detail.status_code == 200
+    assert [m["path"][-1]["lei"] for m in detail.json()["members"]] == ["HOLD", "HOLD"]
+    verdict_url = f"/portfolios/{portfolio_id}/members/2/verdicts/gleif:SUB"
+    client.put(verdict_url, json={"verdict": "rejected"})
+    assert client.get(detail_url).status_code == 404
+    undone = client.delete(verdict_url)
+    assert (undone.status_code, undone.json()["matches"][0]["verdict"]) == (200, None)
+    assert client.get(detail_url).status_code == 200
+    assert client.get(f"/portfolios/{portfolio_id}/concentrations/nope").status_code == 404
+
+
+def test_a_member_is_searched_again_under_a_corrected_name(client):
+    portfolio_id = client.post("/portfolios", json={"members": [{"name": "Brandko Fodes"}]}).json()["portfolio_id"]
+
+    corrected = client.put(f"/portfolios/{portfolio_id}/members/1", json={"name": "Brandco Foods", "state": ""})
+
+    assert corrected.status_code == 200
+    assert [(m["entity_id"], m["band"]) for m in corrected.json()["matches"]] == [("gleif:SUB", "Firm")]
+    assert client.put(f"/portfolios/{portfolio_id}/members/7", json={"name": "Acme"}).status_code == 404
+
+
+def test_the_sample_portfolio_comes_with_a_random_portfolio_to_compare_it_with(client):
+    sample = client.get("/sample").json()
+
+    assert len(sample["members"]) == 15
+    baseline = sample["baseline"]
+    assert (len(baseline["members"]), baseline["affected"], baseline["concentrations"]) == (15, 0, 0)
+    created = client.post("/portfolios", json={"members": sample["members"], "sample": True}).json()
+    assert created["sample"] is True
+    assert client.get(f"/portfolios/{created['portfolio_id']}").json()["sample"] is True
+    own = client.post("/portfolios", json={"members": [{"name": "Acme Holdings"}]}).json()
+    assert own["sample"] is False
+
+
+def test_the_interface_is_served_beside_the_api_when_it_has_been_built(tmp_path):
+    sources = RawSourceBuilder()
+    sources.lei_record("HOLD", "Acme Holdings Inc")
+    web_dir = tmp_path / "dist"
+    web_dir.mkdir()
+    (web_dir / "index.html").write_text("<title>Common Cause</title>")
+    app = create_app(built_snapshot(sources, tmp_path), tmp_path / "workspace.duckdb", web_dir=web_dir)
+
+    with TestClient(app) as client:
+        assert "Common Cause" in client.get("/").text
+        assert client.get("/portfolios/nope").status_code == 404

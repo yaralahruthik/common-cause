@@ -7,3 +7,6 @@ __pycache__/
 .ruff_cache/
 data/raw/
 data/workspace.duckdb*
+node_modules/
+web/dist/
+*.tsbuildinfo
